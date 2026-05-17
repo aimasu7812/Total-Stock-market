@@ -36,7 +36,7 @@ INDEX_HTML = r"""<!doctype html>
   <meta name="apple-mobile-web-app-title" content="日経225指標">
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="/icons/icon.svg">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <title>日経225 指標ダッシュボード</title>
   <style>
     :root { color-scheme: light; --ink:#20242a; --muted:#68707c; --line:#d8dde6; --panel:#f7f8fa; --accent:#1f6feb; }
@@ -1538,7 +1538,12 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/manifest.json", "/sw.js") or path.startswith("/icons/"):
             file_path = PUBLIC_DIR / path.lstrip("/")
             if file_path.exists() and file_path.is_file():
-                content_type = "application/manifest+json" if path.endswith(".json") else "application/javascript" if path.endswith(".js") else "image/svg+xml"
+                content_type = (
+                    "application/manifest+json" if path.endswith(".json")
+                    else "application/javascript" if path.endswith(".js")
+                    else "image/png" if path.endswith(".png")
+                    else "image/svg+xml"
+                )
                 self._send(200, file_path.read_bytes(), content_type)
                 return
         if path == "/api/data":
