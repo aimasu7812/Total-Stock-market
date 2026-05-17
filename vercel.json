@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "routes": [
+    { "src": "/manifest.json", "dest": "/public/manifest.json" },
+    { "src": "/sw.js", "dest": "/public/sw.js" },
+    { "src": "/icons/(.*)", "dest": "/public/icons/$1" },
+    { "src": "/(.*)", "dest": "/api/app.py" }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "name": "日経225 指標ダッシュボード",
+  "short_name": "日経225指標",
+  "description": "日経225関連指標、相関、統計処理、テクニカル分析を確認する個人用ダッシュボード",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1f6feb",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
