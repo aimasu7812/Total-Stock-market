@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ DEFAULT_DATA_DIR = Path("/tmp/nikkei225-dashboard-data") if os.environ.get("VERC
 DATA_DIR = Path(os.environ.get("NIKKEI225_DATA_DIR", DEFAULT_DATA_DIR))
 CACHE_PATH = DATA_DIR / "cache.json"
 BUNDLED_CACHE_PATH = Path("data/cache.json")
+AUTO_REFRESH_HOURS = float(os.environ.get("NIKKEI225_AUTO_REFRESH_HOURS", "12"))
 
 HEADERS = {
     "User-Agent": (
@@ -125,6 +127,15 @@ def _fetch_js(path: str) -> str:
     return response.text
 
 
+def _fetch_sources(paths: dict[str, str]) -> dict[str, str]:
+    sources: dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        future_map = {executor.submit(_fetch_js, path): name for name, path in paths.items()}
+        for future in as_completed(future_map):
+            sources[future_map[future]] = future.result()
+    return sources
+
+
 def _to_date(ms: int | float) -> str:
     return datetime.fromtimestamp(ms / 1000, JST).date().isoformat()
 
@@ -183,7 +194,7 @@ def fetch_all() -> dict[str, Any]:
         f"s{code}": f"/_data/_nfsWEB/HS_DATA_DAY/S{code}.json?494150"
         for code in MARKET_SERIES
     }
-    sources = {name: _fetch_js(path) for name, path in {**DATA_FILES, **market_files}.items()}
+    sources = _fetch_sources({**DATA_FILES, **market_files})
     daily2 = _parse_js_array(sources["daily2"], "DAILY")
     daily2year = _parse_js_array(sources["daily2year"], "DAILY")
     dailyweek2 = _parse_js_array(sources["dailyweek2"], "DAILY")
@@ -323,6 +334,30 @@ def load_cache() -> dict[str, Any] | None:
             return json.loads(BUNDLED_CACHE_PATH.read_text(encoding="utf-8"))
         return None
     return json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+
+
+def cache_age_hours(payload: dict[str, Any] | None) -> float | None:
+    if not payload or not payload.get("fetched_at"):
+        return None
+    try:
+        fetched_at = datetime.fromisoformat(str(payload["fetched_at"]))
+    except ValueError:
+        return None
+    if fetched_at.tzinfo is None:
+        fetched_at = fetched_at.replace(tzinfo=JST)
+    return (datetime.now(JST) - fetched_at.astimezone(JST)).total_seconds() / 3600
+
+
+def cache_is_stale(payload: dict[str, Any] | None, max_age_hours: float = AUTO_REFRESH_HOURS) -> bool:
+    age = cache_age_hours(payload)
+    return age is None or age >= max_age_hours
+
+
+def load_fresh_cache(max_age_hours: float = AUTO_REFRESH_HOURS) -> dict[str, Any]:
+    payload = load_cache()
+    if cache_is_stale(payload, max_age_hours):
+        return refresh_cache()
+    return payload
 
 
 def save_cache(payload: dict[str, Any]) -> None:

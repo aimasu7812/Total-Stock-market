@@ -5,5 +5,8 @@
     { "src": "/sw.js", "dest": "/public/sw.js" },
     { "src": "/icons/(.*)", "dest": "/public/icons/$1" },
     { "src": "/(.*)", "dest": "/api/app.py" }
+  ],
+  "crons": [
+    { "path": "/api/update", "schedule": "30 9 * * 4" }
   ]
 }

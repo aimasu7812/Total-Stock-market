@@ -31,12 +31,14 @@ Vercelでは常駐Pythonサーバーではなく、`api/app.py` のServerless Fu
 ```text
 DASHBOARD_PASSWORD=自分だけが知っているログイン用パスワード
 DASHBOARD_SECRET=長いランダム文字列
+CRON_SECRET=長いランダム文字列
 ```
 
 任意の環境変数:
 
 ```text
 NIKKEI225_DATA_DIR=/tmp/nikkei225-dashboard-data
+NIKKEI225_AUTO_REFRESH_HOURS=12
 ```
 
 Vercel設定手順:
@@ -44,11 +46,13 @@ Vercel設定手順:
 1. このフォルダをGitHubへ push します。
 2. Vercelで新規プロジェクトとしてImportします。
 3. Framework Presetは `Other` のままで構いません。
-4. Environment Variables に `DASHBOARD_PASSWORD` と `DASHBOARD_SECRET` を設定します。
+4. Environment Variables に `DASHBOARD_PASSWORD`、`DASHBOARD_SECRET`、`CRON_SECRET` を設定します。
 5. Deployします。
 6. 発行されたURLへアクセスし、設定したパスワードでログインします。
 
-注意: VercelのServerless環境では保存領域が永続ではないため、初期表示は同梱の `data/cache.json` を使います。画面の `更新チェック` で取得した最新データは、その実行インスタンス上の一時領域に保存されます。
+`vercel.json` には毎週木曜日 18:30 JST（09:30 UTC）に `/api/update` を呼ぶ Cron Job を設定しています。Vercelは `CRON_SECRET` を `Authorization` ヘッダーとして送るため、この値を設定してからRedeployしてください。
+
+注意: VercelのServerless環境では保存領域が永続ではないため、初期表示は同梱の `data/cache.json` を使います。画面表示時にキャッシュが古い場合は自動で再取得し、画面の `更新チェック` やCronで取得した最新データは、その実行インスタンス上の一時領域に保存されます。より完全な永続化が必要な場合は、Vercel Blob/KVやGitHub Actionsで `data/cache.json` を更新する方式を追加してください。
 
 ## できること
 
@@ -96,8 +100,11 @@ OpenAI APIキーなどの外部APIキーは、このアプリ内にはありま�
 
 ## 更新チェック
 
-アプリ起動中は、毎週木曜日の18:00以降に一度だけ自動チェックします。
-アプリを起動していない場合は自動チェックできないため、木曜18:00以降に起動するか、画面の `更新チェック` を押してください。
+ローカルアプリ起動中は、毎週木曜日の18:00以降に一度だけ自動チェックします。
+
+Vercel本番では、`vercel.json` の Cron Job が毎週木曜日18:30 JST頃に `/api/update` を実行します。Cronを動かすには、VercelのEnvironment Variablesに `CRON_SECRET` を設定してRedeployしてください。
+
+また、`/api/data` はキャッシュの `fetched_at` が `NIKKEI225_AUTO_REFRESH_HOURS`（既定12時間）以上古い場合、自動で最新データを取得してから返します。Cronや手動更新が失敗していても、次回表示時に再取得を試みます。
 
 抽出済みデータは外付けドライブの `/Volumes/Crucial X9/AI/nikkei225-dashboard-data/cache.json` に保存されます。
 保存先を変える場合は、起動前に `NIKKEI225_DATA_DIR` を指定してください。

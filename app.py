@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from data_sources import JST, load_cache, refresh_cache
+from data_sources import JST, cache_age_hours, cache_is_stale, load_cache, load_fresh_cache, refresh_cache
 
 
 HOST = "127.0.0.1"
@@ -40,6 +40,10 @@ def dashboard_secret() -> str:
 
 def dashboard_token() -> str:
     return hmac.new(dashboard_secret().encode("utf-8"), b"nikkei225-dashboard", "sha256").hexdigest()
+
+
+def cron_secret() -> str:
+    return os.environ.get("CRON_SECRET", "")
 
 
 def login_html(message: str = "") -> bytes:
@@ -1659,10 +1663,33 @@ class Handler(BaseHTTPRequestHandler):
             self._send(401, login_html(), "text/html; charset=utf-8")
         return False
 
+    def _cron_authenticated(self) -> bool:
+        secret = cron_secret()
+        if not secret:
+            return False
+        return hmac.compare_digest(self.headers.get("Authorization", ""), f"Bearer {secret}")
+
+    def _send_update_result(self) -> None:
+        try:
+            STATE["refreshing"] = True
+            payload = refresh_cache()
+            STATE["last_error"] = None
+            self._send(200, json.dumps(payload, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+        except Exception as exc:
+            STATE["last_error"] = str(exc)
+            self._send(500, json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+        finally:
+            STATE["refreshing"] = False
+
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/login":
             self._send(200, login_html(), "text/html; charset=utf-8")
+            return
+        if path == "/api/update":
+            if not self._cron_authenticated() and not self._require_auth():
+                return
+            self._send_update_result()
             return
         if not self._require_auth():
             return
@@ -1681,11 +1708,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, file_path.read_bytes(), content_type)
                 return
         if path == "/api/data":
-            cache = load_cache() or {"rows": [], "error": STATE["last_error"]}
+            try:
+                cache = load_fresh_cache()
+                STATE["last_error"] = None
+            except Exception as exc:
+                STATE["last_error"] = str(exc)
+                cache = load_cache() or {"rows": [], "error": STATE["last_error"]}
             self._send(200, json.dumps(cache, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
             return
         if path == "/api/status":
-            body = {**STATE, "now": datetime.now(JST).isoformat(timespec="seconds")}
+            cache = load_cache()
+            body = {
+                **STATE,
+                "now": datetime.now(JST).isoformat(timespec="seconds"),
+                "cache_fetched_at": cache.get("fetched_at") if cache else None,
+                "cache_age_hours": cache_age_hours(cache),
+                "cache_stale": cache_is_stale(cache),
+            }
             self._send(200, json.dumps(body, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
             return
         if path == "/api/export.csv":
@@ -1716,16 +1755,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._require_auth():
             return
         if path == "/api/update":
-            try:
-                STATE["refreshing"] = True
-                payload = refresh_cache()
-                STATE["last_error"] = None
-                self._send(200, json.dumps(payload, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
-            except Exception as exc:
-                STATE["last_error"] = str(exc)
-                self._send(500, json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
-            finally:
-                STATE["refreshing"] = False
+            self._send_update_result()
             return
         self._send(404, b"not found", "text/plain; charset=utf-8")
 

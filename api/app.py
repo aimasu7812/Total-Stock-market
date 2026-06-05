@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app import INDEX_HTML  # noqa: E402
-from data_sources import JST, load_cache, refresh_cache  # noqa: E402
+from data_sources import JST, cache_age_hours, cache_is_stale, load_cache, load_fresh_cache, refresh_cache  # noqa: E402
 
 
 COOKIE_NAME = "nikkei_dashboard_auth"
@@ -33,6 +33,10 @@ def _secret() -> bytes:
 
 def _token() -> str:
     return hmac.new(str(_secret()).encode("utf-8"), b"nikkei225-dashboard", "sha256").hexdigest()
+
+
+def _cron_secret() -> str:
+    return os.environ.get("CRON_SECRET", "")
 
 
 def _login_html(message: str = "") -> bytes:
@@ -96,10 +100,29 @@ class handler(BaseHTTPRequestHandler):
             self._send(401, _login_html(), "text/html; charset=utf-8")
         return False
 
+    def _cron_authenticated(self) -> bool:
+        secret = _cron_secret()
+        if not secret:
+            return False
+        return hmac.compare_digest(self.headers.get("Authorization", ""), f"Bearer {secret}")
+
+    def _send_update_result(self) -> None:
+        try:
+            payload = refresh_cache()
+            payload = {k: v for k, v in payload.items() if k != "data_dir"}
+            self._send(200, json.dumps(payload, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+        except Exception as exc:
+            self._send(500, json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/login":
             self._send(200, _login_html(), "text/html; charset=utf-8")
+            return
+        if path == "/api/update":
+            if not self._cron_authenticated() and not self._require_auth():
+                return
+            self._send_update_result()
             return
         if not self._require_auth():
             return
@@ -107,14 +130,22 @@ class handler(BaseHTTPRequestHandler):
             self._send(200, INDEX_HTML.encode("utf-8"), "text/html; charset=utf-8")
             return
         if path == "/api/data":
-            cache = load_cache()
-            if cache is None:
-                cache = refresh_cache()
+            try:
+                cache = load_fresh_cache()
+            except Exception as exc:
+                cache = load_cache() or {"rows": []}
+                cache = {**cache, "error": str(exc)}
             cache = {k: v for k, v in cache.items() if k != "data_dir"}
             self._send(200, json.dumps(cache, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
             return
         if path == "/api/status":
-            body = {"now": datetime.now(JST).isoformat(timespec="seconds")}
+            cache = load_cache()
+            body = {
+                "now": datetime.now(JST).isoformat(timespec="seconds"),
+                "cache_fetched_at": cache.get("fetched_at") if cache else None,
+                "cache_age_hours": cache_age_hours(cache),
+                "cache_stale": cache_is_stale(cache),
+            }
             self._send(200, json.dumps(body, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
             return
         if path == "/api/export.csv":
@@ -145,11 +176,6 @@ class handler(BaseHTTPRequestHandler):
         if not self._require_auth():
             return
         if path == "/api/update":
-            try:
-                payload = refresh_cache()
-                payload = {k: v for k, v in payload.items() if k != "data_dir"}
-                self._send(200, json.dumps(payload, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
-            except Exception as exc:
-                self._send(500, json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+            self._send_update_result()
             return
         self._send(404, b"not found", "text/plain; charset=utf-8")
