@@ -59,6 +59,8 @@ INDEX_HTML = r"""<!doctype html>
     .category.active { border-color: var(--accent); color: var(--accent); font-weight: 700; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
     .toolbar > * { min-height: 34px; }
+    .time-controls { display: block; }
+    .mobile-controls-toggle { display: none; border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 9px 12px; cursor: pointer; color: var(--ink); font-weight: 700; }
     .primary { border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 7px; padding: 7px 12px; cursor: pointer; }
     .secondary { border: 1px solid var(--line); background: #fff; border-radius: 7px; padding: 7px 12px; cursor: pointer; color: var(--ink); text-decoration: none; display: inline-flex; align-items: center; }
     select, input { border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; background: #fff; }
@@ -120,9 +122,11 @@ INDEX_HTML = r"""<!doctype html>
     @media (max-width: 820px) {
       header { align-items: flex-start; flex-direction: column; padding: 14px 14px 10px; }
       h1 { font-size: 18px; }
-      main { grid-template-columns: 1fr; min-height: auto; }
-      aside { border-right: 0; border-bottom: 1px solid var(--line); padding: 10px; position: sticky; top: 0; z-index: 5; }
-      .stack { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+      body { overflow-x: hidden; }
+      main { grid-template-columns: minmax(0, 1fr); min-height: auto; overflow-x: hidden; }
+      aside, section { min-width: 0; width: 100%; max-width: 100%; }
+      aside { border-right: 0; border-bottom: 1px solid var(--line); padding: 10px; position: sticky; top: 0; z-index: 5; overflow: hidden; }
+      .stack { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; width: 100%; min-width: 0; max-width: 100%; }
       .category { width: auto; flex: 0 0 auto; white-space: nowrap; padding: 8px 10px; }
       section { padding: 12px; }
       .tabbar { max-width: 100%; overflow-x: auto; }
@@ -130,13 +134,41 @@ INDEX_HTML = r"""<!doctype html>
       .toolbar > label, .toolbar > .check-list, .toolbar > button, .toolbar > a, .axis-tools > label { flex: 1 1 150px; }
       select, input { max-width: 100%; }
       .series-checks, .check-list { min-width: min(100%, 300px); width: 100%; }
+      #timePane.active { display: flex; flex-direction: column; gap: 12px; }
+      #timePane > .mobile-controls-toggle { order: 1; }
+      #timePane > .time-controls { order: 2; }
+      #timePane > .chart-wrap { order: 3; }
+      #timePane > #table { order: 4; }
+      #timePane > #technicalPane { order: 3; }
+      .mobile-controls-toggle { display: inline-flex; align-items: center; justify-content: center; align-self: flex-end; min-width: 98px; }
+      .time-controls { display: none; border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #f8fafc; }
+      .time-controls.open { display: block; }
+      .time-controls .toolbar { margin-bottom: 10px; }
+      .chart-wrap { border-radius: 6px; }
+      #chart { height: clamp(400px, 64vh, 560px); }
+      .legend { max-height: 96px; overflow-y: auto; }
       svg { height: 420px; }
-      .summary { grid-template-columns: 1fr; }
-      .relation-grid { grid-template-columns: repeat(3, minmax(260px, 84vw)); }
+      .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .metric { padding: 8px; }
+      .metric b { font-size: 16px; overflow-wrap: anywhere; }
+      #relationPane.active { display: flex; flex-direction: column; gap: 12px; }
+      #relationPane > #relationControlsToggle { order: 1; }
+      #relationPane > .relation-controls { order: 2; }
+      #relationPane > .relation-grid { order: 3; }
+      #relationPane > #relationSummary { order: 4; }
+      #relationPane > #selectedPoint { order: 5; }
+      #relationPane > #relationTable { order: 6; }
+      #relationPane > .relation-section { order: 7; }
+      .relation-controls { display: none; border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #f8fafc; margin-bottom: 0; }
+      .relation-controls.open { display: flex; }
+      .relation-grid { grid-template-columns: 1fr; overflow-x: visible; }
+      .mini-card svg { height: 390px; }
       .pair-grid { grid-template-columns: 1fr; }
+      .pair-card svg { height: 340px; }
       .tech-grid, .stats-grid, .regression-charts { grid-template-columns: 1fr; }
-      .tech-card.wide svg { height: 360px; }
+      .tech-card.wide svg { height: min(58vh, 520px); min-height: 360px; }
       .tech-card svg { height: 170px; }
+      .panel svg { height: 380px; }
       table { font-size: 12px; display: block; overflow-x: auto; white-space: nowrap; }
     }
   </style>
@@ -157,21 +189,24 @@ INDEX_HTML = r"""<!doctype html>
         <button class="tab" data-tab="relation" type="button">関係性</button>
       </div>
       <div id="timePane" class="pane active">
-        <div class="toolbar">
-          <div id="series" class="check-list series-checks" title="系列"></div>
-          <label class="meta">チャート種類 <select id="timeView" class="view-control"><option value="line">折れ線グラフ</option><option value="tech">テクニカル分析</option></select></label>
-          <label class="meta">比較方法 <select id="timeScale"><option value="raw">実データ</option><option value="indexed">左端=1の変化率</option></select></label>
-          <label class="meta">開始 <input id="from" type="date"></label>
-          <label class="meta">終了 <input id="to" type="date"></label>
-          <button class="primary" id="refresh" type="button">更新チェック</button>
-          <a class="secondary" id="csv" href="/api/export.csv">CSV</a>
-        </div>
-        <div class="axis-tools meta">
-          <label><input id="showCustomLine" type="checkbox"> 基準線</label>
-          <input id="customLineValue" type="number" step="any" placeholder="例: 2">
-          <label><input id="showZeroLine" type="checkbox"> ゼロライン</label>
-          <label><input id="showSigma2" type="checkbox"> ±2σ</label>
-          <label><input id="showSigma3" type="checkbox"> ±3σ</label>
+        <button class="mobile-controls-toggle" id="timeControlsToggle" type="button" aria-expanded="false" aria-controls="timeControls">設定</button>
+        <div class="time-controls" id="timeControls">
+          <div class="toolbar">
+            <div id="series" class="check-list series-checks" title="系列"></div>
+            <label class="meta">チャート種類 <select id="timeView" class="view-control"><option value="line">折れ線グラフ</option><option value="tech">テクニカル分析</option></select></label>
+            <label class="meta">比較方法 <select id="timeScale"><option value="raw">実データ</option><option value="indexed">左端=1の変化率</option></select></label>
+            <label class="meta">開始 <input id="from" type="date"></label>
+            <label class="meta">終了 <input id="to" type="date"></label>
+            <button class="primary" id="refresh" type="button">更新チェック</button>
+            <a class="secondary" id="csv" href="/api/export.csv">CSV</a>
+          </div>
+          <div class="axis-tools meta">
+            <label><input id="showCustomLine" type="checkbox"> 基準線</label>
+            <input id="customLineValue" type="number" step="any" placeholder="例: 2">
+            <label><input id="showZeroLine" type="checkbox"> ゼロライン</label>
+            <label><input id="showSigma2" type="checkbox"> ±2σ</label>
+            <label><input id="showSigma3" type="checkbox"> ±3σ</label>
+          </div>
         </div>
         <div class="chart-wrap">
           <svg id="chart" role="img" aria-label="時系列チャート"></svg>
@@ -196,7 +231,8 @@ INDEX_HTML = r"""<!doctype html>
         </div>
       </div>
       <div id="relationPane" class="pane">
-        <div class="toolbar">
+        <button class="mobile-controls-toggle" id="relationControlsToggle" type="button" aria-expanded="false" aria-controls="relationControls">条件</button>
+        <div class="toolbar relation-controls" id="relationControls">
           <label class="meta">横軸 <select id="xFactor"></select></label>
           <label class="meta">縦軸 <select id="yFactor"></select></label>
           <label class="meta">開始 <input id="relFrom" type="date"></label>
@@ -368,6 +404,8 @@ INDEX_HTML = r"""<!doctype html>
         statsMinCount: $("statsMinCount").value,
         regTargets: $("regTargets").querySelectorAll("input").length ? checkedValues("regTargets") : current.regTargets,
         regFeatures: $("regFeatures").querySelectorAll("input").length ? checkedValues("regFeatures") : current.regFeatures,
+        mobileControlsOpen: $("timeControls").classList.contains("open"),
+        mobileRelationControlsOpen: $("relationControls").classList.contains("open"),
         selectedPairIds: activeTab === "relation" ? selectedPairs.map(relationId) : current.selectedPairIds,
         allSelectedPairIds: activeTab === "overview" ? allSelectedPairs.map(relationId) : current.allSelectedPairIds,
       };
@@ -389,7 +427,21 @@ INDEX_HTML = r"""<!doctype html>
       $("allTo").value = savedUi.allTo || "";
       $("allMinCount").value = savedUi.allMinCount || "60";
       $("statsMinCount").value = savedUi.statsMinCount || "120";
+      setTimeControlsOpen(!!savedUi.mobileControlsOpen);
+      setRelationControlsOpen(!!savedUi.mobileRelationControlsOpen);
       if (savedUi.activeTab) activeTab = savedUi.activeTab;
+    }
+
+    function setTimeControlsOpen(open) {
+      $("timeControls").classList.toggle("open", open);
+      $("timeControlsToggle").setAttribute("aria-expanded", open ? "true" : "false");
+      $("timeControlsToggle").textContent = open ? "設定を閉じる" : "設定";
+    }
+
+    function setRelationControlsOpen(open) {
+      $("relationControls").classList.toggle("open", open);
+      $("relationControlsToggle").setAttribute("aria-expanded", open ? "true" : "false");
+      $("relationControlsToggle").textContent = open ? "条件を閉じる" : "条件";
     }
 
     function ema(values, period) {
@@ -1456,6 +1508,14 @@ INDEX_HTML = r"""<!doctype html>
     $("showZeroLine").onchange = drawAndSave;
     $("showSigma2").onchange = drawAndSave;
     $("showSigma3").onchange = drawAndSave;
+    $("timeControlsToggle").onclick = () => {
+      setTimeControlsOpen(!$("timeControls").classList.contains("open"));
+      saveUiState();
+    };
+    $("relationControlsToggle").onclick = () => {
+      setRelationControlsOpen(!$("relationControls").classList.contains("open"));
+      saveUiState();
+    };
     function activateTab(tabName) {
       activeTab = tabName;
       document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === tabName));
