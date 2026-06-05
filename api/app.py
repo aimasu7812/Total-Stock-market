@@ -74,10 +74,15 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _is_local_request(self) -> bool:
+        host = self.headers.get("Host", "").split(",")[0].strip().lower()
+        host = host.rsplit(":", 1)[0].strip("[]")
+        return host in {"localhost", "127.0.0.1", "::1"}
+
     def _authenticated(self) -> bool:
         password = _password()
         if not password:
-            return not os.environ.get("VERCEL")
+            return self._is_local_request()
         jar = cookies.SimpleCookie(self.headers.get("Cookie", ""))
         morsel = jar.get(COOKIE_NAME)
         return bool(morsel and hmac.compare_digest(morsel.value, _token()))
@@ -85,7 +90,7 @@ class handler(BaseHTTPRequestHandler):
     def _require_auth(self) -> bool:
         if self._authenticated():
             return True
-        if not _password() and os.environ.get("VERCEL"):
+        if not _password() and not self._is_local_request():
             self._send(503, _login_html("Vercelの環境変数 DASHBOARD_PASSWORD を設定してください。"), "text/html; charset=utf-8")
         else:
             self._send(401, _login_html(), "text/html; charset=utf-8")
@@ -148,4 +153,3 @@ class handler(BaseHTTPRequestHandler):
                 self._send(500, json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
             return
         self._send(404, b"not found", "text/plain; charset=utf-8")
-
