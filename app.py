@@ -127,6 +127,17 @@ INDEX_HTML = r"""<!doctype html>
     .summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
     .metric { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #fff; }
     .metric b { display: block; font-size: 18px; margin-top: 4px; }
+    .latest-section { margin-top: 14px; }
+    .latest-section h2, .latest-group h2 { margin: 0 0 9px; font-size: 15px; }
+    .latest-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+    .latest-tile { border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px; background: #fff; min-width: 0; }
+    .latest-tile .series { color: var(--muted); font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
+    .latest-tile .value { display: block; font-size: 24px; font-weight: 800; line-height: 1.15; margin: 7px 0 4px; color: var(--ink); }
+    .latest-tile .date { color: var(--muted); font-size: 12px; }
+    .latest-groups { display: grid; gap: 18px; margin-top: 16px; }
+    .latest-group { border-top: 1px solid var(--line); padding-top: 14px; }
+    .latest-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    .latest-table table { margin-top: 0; }
     .relation-section { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
     .relation-section h2 { margin: 0 0 8px; font-size: 15px; }
     .selected-point { min-height: 32px; color: var(--muted); font-size: 13px; padding: 8px 0 0; }
@@ -214,6 +225,9 @@ INDEX_HTML = r"""<!doctype html>
       .mini-card svg { height: 390px; }
       .pair-grid { grid-template-columns: 1fr; }
       .pair-card svg { height: 340px; }
+      .latest-grid { grid-template-columns: 1fr; }
+      .latest-tile .value { font-size: 22px; }
+      .latest-group-head { align-items: flex-start; flex-direction: column; gap: 2px; }
       .tech-grid, .stats-grid, .regression-charts { grid-template-columns: 1fr; }
       .tech-card.wide svg { height: min(58vh, 520px); min-height: 360px; }
       .tech-card svg { height: 170px; }
@@ -234,6 +248,7 @@ INDEX_HTML = r"""<!doctype html>
     <section>
       <div class="tabbar" role="tablist" aria-label="表示切替">
         <button class="tab active" data-tab="time" type="button">時系列</button>
+        <button class="tab" data-tab="latest" type="button">最新値</button>
         <button class="tab" data-tab="tech" type="button">テクニカル</button>
         <button class="tab" data-tab="relation" type="button">関係性</button>
       </div>
@@ -278,6 +293,18 @@ INDEX_HTML = r"""<!doctype html>
             </div>
           </div>
         </div>
+      </div>
+      <div id="latestPane" class="pane">
+        <div class="toolbar">
+          <label class="meta">カテゴリ <select id="latestCategory"></select></label>
+          <label class="meta">検索 <input id="latestSearch" type="search" placeholder="項目名"></label>
+        </div>
+        <div class="summary" id="latestSummary"></div>
+        <div class="latest-section">
+          <h2>主要カテゴリ</h2>
+          <div id="latestHighlights" class="latest-grid"></div>
+        </div>
+        <div id="latestGroups" class="latest-groups"></div>
       </div>
       <div id="relationPane" class="pane">
         <button class="mobile-controls-toggle" id="relationControlsToggle" type="button" aria-expanded="false" aria-controls="relationControls">条件</button>
@@ -449,6 +476,8 @@ INDEX_HTML = r"""<!doctype html>
         allFrom: $("allFrom").value,
         allTo: $("allTo").value,
         allMinCount: $("allMinCount").value,
+        latestCategory: $("latestCategory").value,
+        latestSearch: $("latestSearch").value,
         statsCategories: $("statsCategories").options.length ? [...$("statsCategories").selectedOptions].map(o => o.value) : current.statsCategories,
         statsMinCount: $("statsMinCount").value,
         regTargets: $("regTargets").querySelectorAll("input").length ? checkedValues("regTargets") : current.regTargets,
@@ -475,6 +504,7 @@ INDEX_HTML = r"""<!doctype html>
       $("allFrom").value = savedUi.allFrom || "";
       $("allTo").value = savedUi.allTo || "";
       $("allMinCount").value = savedUi.allMinCount || "60";
+      $("latestSearch").value = savedUi.latestSearch || "";
       $("statsMinCount").value = savedUi.statsMinCount || "120";
       setTimeControlsOpen(!!savedUi.mobileControlsOpen);
       setRelationControlsOpen(!!savedUi.mobileRelationControlsOpen);
@@ -556,6 +586,7 @@ INDEX_HTML = r"""<!doctype html>
       const realCats = [...new Set(payload.rows.map(r => r.category))];
       const cats = ["全体", "統計処理", ...realCats];
       category = category || (cats.includes(savedUi.category) ? savedUi.category : realCats[0]);
+      initLatestControls();
       $("categories").innerHTML = cats.map(c => `<button class="category ${c === category ? "active" : ""}" data-c="${c}">${c}</button>`).join("");
       document.querySelectorAll(".category").forEach(b => b.onclick = () => {
         saveUiState();
@@ -578,6 +609,11 @@ INDEX_HTML = r"""<!doctype html>
         if (activeTab === "overview" || activeTab === "stats") activateTab("time");
         loadData();
       });
+      if (activeTab === "latest") {
+        draw();
+        saveUiState();
+        return;
+      }
       if (category === "全体") {
         activateTab("overview");
         initRelationControls();
@@ -644,7 +680,93 @@ INDEX_HTML = r"""<!doctype html>
         .filter(r => { const t = parseDate(r.date); return t >= from && t <= to; });
     }
 
+    const latestCategoryOrder = ["空売り比率", "株価トレンド", "日経225 PER", "投資主体別売買動向", "商品先物", "NT倍率", "信用評価損益率", "騰落レシオ", "為替", "ドル建て日経平均"];
+    const latestHighlightCategories = new Set(["空売り比率", "株価トレンド", "日経225 PER", "投資主体別売買動向", "商品先物", "NT倍率"]);
+
+    function latestSort(a, b) {
+      const ai = latestCategoryOrder.indexOf(a.category), bi = latestCategoryOrder.indexOf(b.category);
+      return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi)
+        || a.category.localeCompare(b.category, "ja")
+        || a.series.localeCompare(b.series, "ja");
+    }
+
+    function latestEntries() {
+      const byKey = new Map();
+      for (const row of payload?.rows || []) {
+        const key = factorKey(row);
+        const current = byKey.get(key);
+        if (!current || row.date.localeCompare(current.date) > 0) byKey.set(key, row);
+      }
+      return [...byKey.values()].sort(latestSort);
+    }
+
+    function initLatestControls() {
+      const entries = latestEntries();
+      const cats = [...new Set(entries.map(r => r.category))].sort((a, b) => {
+        const ai = latestCategoryOrder.indexOf(a), bi = latestCategoryOrder.indexOf(b);
+        return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi) || a.localeCompare(b, "ja");
+      });
+      const old = $("latestCategory").value || savedUi.latestCategory || "all";
+      $("latestCategory").innerHTML = `<option value="all">すべて</option>${cats.map(c => `<option value="${esc(c)}">${c}</option>`).join("")}`;
+      $("latestCategory").value = cats.includes(old) ? old : "all";
+    }
+
+    function filteredLatestEntries() {
+      const selectedCat = $("latestCategory").value;
+      const query = $("latestSearch").value.trim().toLowerCase();
+      return latestEntries().filter(row => {
+        if (selectedCat !== "all" && row.category !== selectedCat) return false;
+        if (!query) return true;
+        return `${row.category} ${row.series}`.toLowerCase().includes(query);
+      });
+    }
+
+    function latestTile(row) {
+      return `<div class="latest-tile">
+        <div class="series">${esc(row.category)} / ${esc(row.series)}</div>
+        <span class="value">${fmt(row.value)}</span>
+        <div class="date">${row.date}</div>
+      </div>`;
+    }
+
+    function drawLatest() {
+      if (!payload?.rows?.length) return;
+      if (!$("latestCategory").options.length) initLatestControls();
+      const allEntries = latestEntries();
+      const entries = filteredLatestEntries();
+      const latestDate = allEntries.reduce((max, row) => row.date > max ? row.date : max, "");
+      const filteredDates = entries.map(r => r.date);
+      const newestFiltered = filteredDates.length ? filteredDates.sort().slice(-1)[0] : "-";
+      const categories = new Set(entries.map(r => r.category));
+      $("latestSummary").innerHTML = [
+        ["最新日付", latestDate || "-"],
+        ["表示系列", `${entries.length.toLocaleString()} / ${allEntries.length.toLocaleString()}`],
+        ["カテゴリ数", categories.size.toLocaleString()],
+        ["表示内の最新", newestFiltered],
+      ].map(([k, v]) => `<div class="metric"><span class="meta">${k}</span><b>${v}</b></div>`).join("");
+
+      const highlights = entries.filter(r => latestHighlightCategories.has(r.category)).slice(0, 18);
+      $("latestHighlights").innerHTML = highlights.length
+        ? highlights.map(latestTile).join("")
+        : `<div class="empty">該当する最新値がありません</div>`;
+
+      const groups = groupBy(entries, r => r.category);
+      $("latestGroups").innerHTML = Object.entries(groups).sort(([, a], [, b]) => latestSort(a[0], b[0])).map(([cat, rows]) => `
+        <div class="latest-group">
+          <div class="latest-group-head"><h2>${esc(cat)}</h2><span class="meta">${rows.length.toLocaleString()}系列</span></div>
+          <div class="latest-table"><table>
+            <thead><tr><th>項目</th><th>最新日付</th><th>値</th></tr></thead>
+            <tbody>${rows.map(r => `<tr><td>${esc(r.series)}</td><td>${r.date}</td><td>${fmt(r.value)}</td></tr>`).join("")}</tbody>
+          </table></div>
+        </div>
+      `).join("") || `<div class="empty">該当する最新値がありません</div>`;
+    }
+
     function draw() {
+      if (activeTab === "latest") {
+        drawLatest();
+        return;
+      }
       if (activeTab === "relation") {
         drawRelationship();
         return;
@@ -1549,6 +1671,8 @@ INDEX_HTML = r"""<!doctype html>
     $("allFrom").onchange = drawAndSave;
     $("allTo").onchange = drawAndSave;
     $("allMinCount").onchange = drawAndSave;
+    $("latestCategory").onchange = drawAndSave;
+    $("latestSearch").oninput = drawAndSave;
     $("statsCategories").onchange = drawAndSave;
     $("statsMinCount").onchange = drawAndSave;
     $("bandSigma").onchange = drawAndSave;
@@ -1571,12 +1695,18 @@ INDEX_HTML = r"""<!doctype html>
       if (tabName === "time") $("timeView").value = "line";
       if (tabName === "tech") $("timeView").value = "tech";
       $("timePane").classList.toggle("active", tabName === "time" || tabName === "tech");
+      $("latestPane").classList.toggle("active", tabName === "latest");
       $("relationPane").classList.toggle("active", tabName === "relation");
       $("overviewPane").classList.toggle("active", tabName === "overview");
       $("statsPane").classList.toggle("active", tabName === "stats");
     }
     document.querySelectorAll(".tab").forEach(tab => {
       tab.onclick = () => {
+        if (tab.dataset.tab === "latest") {
+          activateTab("latest");
+          drawAndSave();
+          return;
+        }
         if (category === "全体" || category === "統計処理") {
           const realCats = [...new Set(payload.rows.map(r => r.category))];
           category = realCats[0];
