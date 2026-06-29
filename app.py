@@ -134,6 +134,22 @@ INDEX_HTML = r"""<!doctype html>
     .latest-tile .series { color: var(--muted); font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
     .latest-tile .value { display: block; font-size: 24px; font-weight: 800; line-height: 1.15; margin: 7px 0 4px; color: var(--ink); }
     .latest-tile .date { color: var(--muted); font-size: 12px; }
+    .latest-priority-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .latest-tile.hero { grid-column: span 2; background: #101826; border-color: #101826; color: #fff; }
+    .latest-tile.hero .series, .latest-tile.hero .date { color: #c8d2e0; }
+    .latest-tile.hero .value { color: #fff; font-size: 28px; }
+    .latest-tile.hero .subvalue { color: #e8edf5; }
+    .latest-tile.danger-fill { background: #cf222e; border-color: #cf222e; color: #fff; }
+    .latest-tile.danger-fill .series, .latest-tile.danger-fill .date, .latest-tile.danger-fill .subvalue { color: #ffe6e9; }
+    .latest-tile.danger-fill .value { color: #fff; }
+    .latest-tile.positive { background: #f0fff4; border-color: #9be9a8; }
+    .latest-tile.negative { background: #fff1f3; border-color: #ffb3bd; }
+    .latest-tile.positive .value, .latest-value-positive { color: #116329; }
+    .latest-tile.negative .value, .latest-value-negative { color: #a40e26; }
+    .latest-tile.neutral { background: #f8fafc; }
+    .latest-tile .subvalue { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .latest-mini-values { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .latest-mini-values span { border: 1px solid rgba(255,255,255,.22); border-radius: 999px; padding: 4px 8px; font-size: 12px; background: rgba(255,255,255,.08); color: inherit; }
     .latest-groups { display: grid; gap: 18px; margin-top: 16px; }
     .latest-group { border-top: 1px solid var(--line); padding-top: 14px; }
     .latest-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
@@ -225,6 +241,8 @@ INDEX_HTML = r"""<!doctype html>
       .mini-card svg { height: 390px; }
       .pair-grid { grid-template-columns: 1fr; }
       .pair-card svg { height: 340px; }
+      .latest-priority-grid { grid-template-columns: 1fr; }
+      .latest-tile.hero { grid-column: auto; }
       .latest-grid { grid-template-columns: 1fr; }
       .latest-tile .value { font-size: 22px; }
       .latest-group-head { align-items: flex-start; flex-direction: column; gap: 2px; }
@@ -300,6 +318,10 @@ INDEX_HTML = r"""<!doctype html>
           <label class="meta">検索 <input id="latestSearch" type="search" placeholder="項目名"></label>
         </div>
         <div class="summary" id="latestSummary"></div>
+        <div class="latest-section">
+          <h2>主要チェック項目</h2>
+          <div id="latestPriority" class="latest-priority-grid"></div>
+        </div>
         <div class="latest-section">
           <h2>主要カテゴリ</h2>
           <div id="latestHighlights" class="latest-grid"></div>
@@ -729,6 +751,91 @@ INDEX_HTML = r"""<!doctype html>
       </div>`;
     }
 
+    function latestBy(entries, categoryName, matcher) {
+      return entries
+        .filter(row => row.category === categoryName && matcher(row.series))
+        .sort((a, b) => b.date.localeCompare(a.date))[0] || null;
+    }
+
+    function latestExact(entries, categoryName, seriesName) {
+      return latestBy(entries, categoryName, series => series === seriesName);
+    }
+
+    function latestSigned(value) {
+      if (!Number.isFinite(value)) return "-";
+      return `${value > 0 ? "+" : ""}${fmt(value)}`;
+    }
+
+    function latestToneClass(value) {
+      if (!Number.isFinite(value) || value === 0) return "neutral";
+      return value > 0 ? "positive" : "negative";
+    }
+
+    function latestDateOf(...rows) {
+      const dates = rows.filter(Boolean).map(row => row.date).filter(Boolean).sort();
+      return dates.length ? dates[dates.length - 1] : "-";
+    }
+
+    function latestNikkeiPrice(entries) {
+      const technical = (payload?.technical || []).slice().sort((a, b) => b.date.localeCompare(a.date))[0];
+      if (technical && Number.isFinite(technical.close)) {
+        return { category: "株価トレンド", series: "日経225 終値", value: technical.close, date: technical.date };
+      }
+      return latestBy(entries, "株価トレンド", series => series.startsWith("日経225"));
+    }
+
+    function latestPriorityTile(title, row, options = {}) {
+      const missing = !row || !Number.isFinite(row.value);
+      const className = options.className || (options.tone ? latestToneClass(row?.value) : "");
+      const value = missing ? "未取得" : options.signed ? latestSigned(row.value) : options.formatter ? options.formatter(row.value) : fmt(row.value);
+      return `<div class="latest-tile ${className}">
+        <div class="series">${esc(title)}</div>
+        <span class="value">${value}</span>
+        ${options.sub ? `<div class="subvalue">${esc(options.sub)}</div>` : ""}
+        <div class="date">${missing ? "-" : row.date}</div>
+      </div>`;
+    }
+
+    function drawLatestPriority(entries) {
+      const per = latestExact(entries, "日経225 PER", "PER");
+      const pbr = latestExact(entries, "日経225 PER", "PBR");
+      const nikkeiPrice = latestNikkeiPrice(entries);
+      const eps = nikkeiPrice && per?.value ? nikkeiPrice.value / per.value : NaN;
+      const shortRatio = latestExact(entries, "空売り比率", "空売り比率 合計");
+      const overseas = latestExact(entries, "投資主体別売買動向", "海外投資家");
+      const individual = latestExact(entries, "投資主体別売買動向", "個人 計");
+      const proprietary = latestExact(entries, "投資主体別売買動向", "証券自己");
+      const vix = latestBy(entries, "株価トレンド", series => series.startsWith("VIX指数"));
+      const topix = latestBy(entries, "株価トレンド", series => series.startsWith("TOPIX"));
+      const ntRatio = latestExact(entries, "NT倍率", "NT倍率(日経225/TOPIX)");
+
+      const epsValue = Number.isFinite(eps) ? fmt(eps) : "算出不可";
+      const perValue = per ? `${fmt(per.value)}倍` : "PER未取得";
+      const pbrValue = pbr ? `PBR ${fmt(pbr.value)}倍` : "PBR未取得";
+      const priceValue = nikkeiPrice ? `日経平均 ${fmt(nikkeiPrice.value)}` : "日経平均未取得";
+      const priorityCards = [
+        `<div class="latest-tile hero">
+          <div class="series">日経平均 EPS / PER</div>
+          <span class="value">EPS ${epsValue}</span>
+          <div class="latest-mini-values"><span>${perValue}</span><span>${pbrValue}</span><span>${priceValue}</span></div>
+          <div class="date">${latestDateOf(nikkeiPrice, per, pbr)} / EPS = 日経平均 ÷ PER</div>
+        </div>`,
+        latestPriorityTile("空売り比率 合計", shortRatio, {
+          className: shortRatio?.value > 40 ? "danger-fill" : "neutral",
+          formatter: value => `${fmt(value)}%`,
+          sub: shortRatio?.value > 40 ? "40%超: 警戒水準" : "40%以下",
+        }),
+        latestPriorityTile("海外投資家", overseas, { signed: true, tone: true, sub: "投資主体別売買動向" }),
+        latestPriorityTile("個人", individual, { signed: true, tone: true, sub: "投資主体別売買動向" }),
+        latestPriorityTile("証券自己", proprietary, { signed: true, tone: true, sub: "投資主体別売買動向" }),
+        latestPriorityTile("VIX指数", vix, { formatter: value => fmt(value), sub: "週平均" }),
+        latestPriorityTile("日経平均", nikkeiPrice, { formatter: value => fmt(value), sub: nikkeiPrice?.series || "株価トレンド" }),
+        latestPriorityTile("TOPIX", topix, { formatter: value => fmt(value), sub: topix?.series || "株価トレンド" }),
+        latestPriorityTile("NT倍率", ntRatio, { formatter: value => `${fmt(value)}倍`, sub: "日経225 / TOPIX" }),
+      ];
+      $("latestPriority").innerHTML = priorityCards.join("");
+    }
+
     function drawLatest() {
       if (!payload?.rows?.length) return;
       if (!$("latestCategory").options.length) initLatestControls();
@@ -744,6 +851,8 @@ INDEX_HTML = r"""<!doctype html>
         ["カテゴリ数", categories.size.toLocaleString()],
         ["表示内の最新", newestFiltered],
       ].map(([k, v]) => `<div class="metric"><span class="meta">${k}</span><b>${v}</b></div>`).join("");
+
+      drawLatestPriority(allEntries);
 
       const highlights = entries.filter(r => latestHighlightCategories.has(r.category)).slice(0, 18);
       $("latestHighlights").innerHTML = highlights.length
