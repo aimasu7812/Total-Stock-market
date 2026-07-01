@@ -142,6 +142,11 @@ INDEX_HTML = r"""<!doctype html>
     .latest-tile.danger-fill { background: #cf222e; border-color: #cf222e; color: #fff; }
     .latest-tile.danger-fill .series, .latest-tile.danger-fill .date, .latest-tile.danger-fill .subvalue { color: #ffe6e9; }
     .latest-tile.danger-fill .value { color: #fff; }
+    .latest-tile.success-fill { background: #1a7f37; border-color: #1a7f37; color: #fff; }
+    .latest-tile.success-fill .series, .latest-tile.success-fill .date, .latest-tile.success-fill .subvalue { color: #dafbe1; }
+    .latest-tile.success-fill .value { color: #fff; }
+    .latest-tile.warning-fill { background: #fff8c5; border-color: #eac54f; }
+    .latest-tile.warning-fill .value { color: #7d4e00; }
     .latest-tile.positive { background: #f0fff4; border-color: #9be9a8; }
     .latest-tile.negative { background: #fff1f3; border-color: #ffb3bd; }
     .latest-tile.positive .value, .latest-value-positive { color: #116329; }
@@ -150,6 +155,8 @@ INDEX_HTML = r"""<!doctype html>
     .latest-tile .subvalue { color: var(--muted); font-size: 12px; line-height: 1.45; }
     .latest-mini-values { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .latest-mini-values span { border: 1px solid rgba(255,255,255,.22); border-radius: 999px; padding: 4px 8px; font-size: 12px; background: rgba(255,255,255,.08); color: inherit; }
+    .latest-mini-values.per-ladder span { border-color: rgba(255,255,255,.16); background: rgba(255,255,255,.05); }
+    .latest-mini-values.per-ladder span.hit { border-color: #7ee787; background: rgba(46,160,67,.35); color: #fff; }
     .latest-groups { display: grid; gap: 18px; margin-top: 16px; }
     .latest-group { border-top: 1px solid var(--line); padding-top: 14px; }
     .latest-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
@@ -796,6 +803,22 @@ INDEX_HTML = r"""<!doctype html>
       </div>`;
     }
 
+    function latestPerLadder(eps, currentPer) {
+      if (!Number.isFinite(eps) || eps <= 0) return "";
+      const levels = [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30];
+      return `<div class="latest-mini-values per-ladder">${levels.map(level => {
+        const hit = Number.isFinite(currentPer) && currentPer >= level;
+        return `<span class="${hit ? "hit" : ""}">PER${level} ${fmt(eps * level)}</span>`;
+      }).join("")}</div>`;
+    }
+
+    function latestVixClass(row) {
+      if (!row || !Number.isFinite(row.value)) return "";
+      if (row.value > 30) return "danger-fill";
+      if (row.value > 20) return "warning-fill";
+      return "neutral";
+    }
+
     function drawLatestPriority(entries) {
       const per = latestExact(entries, "日経225 PER", "PER");
       const pbr = latestExact(entries, "日経225 PER", "PBR");
@@ -806,29 +829,40 @@ INDEX_HTML = r"""<!doctype html>
       const individual = latestExact(entries, "投資主体別売買動向", "個人 計");
       const proprietary = latestExact(entries, "投資主体別売買動向", "証券自己");
       const vix = latestBy(entries, "株価トレンド", series => series.startsWith("VIX指数"));
+      const marginProfit = latestExact(entries, "信用評価損益率", "信用評価損益率");
       const topix = latestBy(entries, "株価トレンド", series => series.startsWith("TOPIX"));
       const ntRatio = latestExact(entries, "NT倍率", "NT倍率(日経225/TOPIX)");
 
       const epsValue = Number.isFinite(eps) ? fmt(eps) : "算出不可";
-      const perValue = per ? `${fmt(per.value)}倍` : "PER未取得";
+      const currentPerValue = per ? `現在PER ${fmt(per.value)}倍` : "現在PER 算出不可";
       const pbrValue = pbr ? `PBR ${fmt(pbr.value)}倍` : "PBR未取得";
       const priceValue = nikkeiPrice ? `日経平均 ${fmt(nikkeiPrice.value)}` : "日経平均未取得";
       const priorityCards = [
         `<div class="latest-tile hero">
-          <div class="series">日経平均 EPS / PER</div>
-          <span class="value">EPS ${epsValue}</span>
-          <div class="latest-mini-values"><span>${perValue}</span><span>${pbrValue}</span><span>${priceValue}</span></div>
+          <div class="series">日経平均 現在PER / EPS</div>
+          <span class="value">${currentPerValue}</span>
+          <div class="latest-mini-values"><span>EPS ${epsValue}</span><span>${pbrValue}</span><span>${priceValue}</span></div>
+          ${latestPerLadder(eps, per?.value)}
           <div class="date">${latestDateOf(nikkeiPrice, per, pbr)} / EPS = 日経平均 ÷ PER</div>
         </div>`,
         latestPriorityTile("空売り比率 合計", shortRatio, {
-          className: shortRatio?.value > 40 ? "danger-fill" : "neutral",
+          className: shortRatio?.value > 40 ? "success-fill" : "neutral",
           formatter: value => `${fmt(value)}%`,
-          sub: shortRatio?.value > 40 ? "40%超: 警戒水準" : "40%以下",
+          sub: shortRatio?.value > 40 ? "40%超: 緑シグナル" : "40%以下",
         }),
         latestPriorityTile("海外投資家", overseas, { signed: true, tone: true, sub: "投資主体別売買動向" }),
         latestPriorityTile("個人", individual, { signed: true, tone: true, sub: "投資主体別売買動向" }),
         latestPriorityTile("証券自己", proprietary, { signed: true, tone: true, sub: "投資主体別売買動向" }),
-        latestPriorityTile("VIX指数", vix, { formatter: value => fmt(value), sub: "週平均" }),
+        latestPriorityTile("VIX指数", vix, {
+          className: latestVixClass(vix),
+          formatter: value => fmt(value),
+          sub: vix?.value > 30 ? "30超: 赤" : vix?.value > 20 ? "20超: 黄" : "20以下",
+        }),
+        latestPriorityTile("信用損益率", marginProfit, {
+          className: marginProfit?.value > 10 ? "danger-fill" : "neutral",
+          formatter: value => `${fmt(value)}%`,
+          sub: marginProfit?.value > 10 ? "10%超: 赤" : "10%以下",
+        }),
         latestPriorityTile("日経平均", nikkeiPrice, { formatter: value => fmt(value), sub: nikkeiPrice?.series || "株価トレンド" }),
         latestPriorityTile("TOPIX", topix, { formatter: value => fmt(value), sub: topix?.series || "株価トレンド" }),
         latestPriorityTile("NT倍率", ntRatio, { formatter: value => `${fmt(value)}倍`, sub: "日経225 / TOPIX" }),
