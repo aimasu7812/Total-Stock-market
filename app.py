@@ -904,8 +904,9 @@ INDEX_HTML = r"""<!doctype html>
     function drawLatestPriority(entries) {
       const per = latestExact(entries, "日経225 PER", "PER");
       const pbr = latestExact(entries, "日経225 PER", "PBR");
-      const epsRow = latestExact(entries, "日経225 PER", "EPS(指数ベース)");
-      const weightedEps = latestExact(entries, "日経225 PER", "EPS(加重平均)");
+      const epsRow = latestExact(entries, "日経225 PER", "EPS(加重平均)");
+      const indexEps = latestExact(entries, "日経225 PER", "EPS(指数ベース)");
+      const indexPer = latestExact(entries, "日経225 PER", "PER(指数ベース)");
       const nikkeiPrice = latestNikkeiPrice(entries);
       const eps = epsRow?.value ?? (nikkeiPrice && per?.value ? nikkeiPrice.value / per.value : NaN);
       const shortRatio = latestExact(entries, "空売り比率", "空売り比率 合計");
@@ -920,17 +921,18 @@ INDEX_HTML = r"""<!doctype html>
       const ntRatio = latestExact(entries, "NT倍率", "NT倍率(日経225/TOPIX)");
 
       const epsValue = Number.isFinite(eps) ? fmt(eps) : "算出不可";
-      const currentPerValue = per ? `現在PER ${fmt(per.value)}倍` : "現在PER 算出不可";
+      const currentPerValue = per ? `加重平均PER ${fmt(per.value)}倍` : "加重平均PER 算出不可";
       const pbrValue = pbr ? `PBR ${fmt(pbr.value)}倍` : "PBR未取得";
       const priceValue = nikkeiPrice ? `日経平均 ${fmt(nikkeiPrice.value)}` : "日経平均未取得";
-      const weightedEpsValue = weightedEps ? `加重平均EPS ${fmt(weightedEps.value)}` : "加重平均EPS未取得";
+      const indexEpsValue = indexEps ? `指数ベースEPS ${fmt(indexEps.value)}` : "指数ベースEPS未取得";
+      const indexPerValue = indexPer ? `指数ベースPER ${fmt(indexPer.value)}倍` : "指数ベースPER未取得";
       const priorityCards = [
         `<div class="latest-tile hero">
-          <div class="series">日経平均 現在PER / EPS</div>
+          <div class="series">日経平均 加重平均PER / EPS</div>
           <span class="value">${currentPerValue}</span>
-          <div class="latest-mini-values"><span>EPS ${epsValue}</span><span>${weightedEpsValue}</span><span>${pbrValue}</span><span>${priceValue}</span></div>
+          <div class="latest-mini-values"><span>加重平均EPS ${epsValue}</span><span>${indexPerValue}</span><span>${indexEpsValue}</span><span>${pbrValue}</span><span>${priceValue}</span></div>
           ${latestPerLadder(eps, per?.value)}
-          <div class="date">${latestDateOf(epsRow, nikkeiPrice, per, pbr)} / EPS = 日経平均 ÷ PER</div>
+          <div class="date">${latestDateOf(epsRow, nikkeiPrice, per, pbr)} / 加重平均EPS = 日経平均 ÷ 加重平均PER</div>
         </div>`,
         latestPriorityTile("空売り比率 合計", shortRatio, {
           className: shortRatio?.value > 40 ? "success-fill" : "neutral",

@@ -280,14 +280,22 @@ def fetch_all() -> dict[str, Any]:
         if len(r) < 28:
             continue
         n225 = _num(r[1])
-        per = r[25] if _num(r[25]) is not None else r[12]
-        pbr = r[26] if _num(r[26]) is not None else r[13]
+        weighted_per = _num(r[12])
+        weighted_pbr = _num(r[13])
+        index_per = _num(r[25])
+        index_pbr = _num(r[26])
+        per = weighted_per if weighted_per is not None else index_per
+        pbr = weighted_pbr if weighted_pbr is not None else index_pbr
         _add(rows, r[0], "日経225 PER", "PER", per)
         _add(rows, r[0], "日経225 PER", "PBR", pbr)
-        if n225 is not None and _num(per) not in (None, 0):
-            _add(rows, r[0], "日経225 PER", "EPS(指数ベース)", n225 / float(_num(per)))
-        if n225 is not None and _num(r[12]) not in (None, 0):
-            _add(rows, r[0], "日経225 PER", "EPS(加重平均)", n225 / float(_num(r[12])))
+        _add(rows, r[0], "日経225 PER", "PER(加重平均)", weighted_per)
+        _add(rows, r[0], "日経225 PER", "PER(指数ベース)", index_per)
+        _add(rows, r[0], "日経225 PER", "PBR(加重平均)", weighted_pbr)
+        _add(rows, r[0], "日経225 PER", "PBR(指数ベース)", index_pbr)
+        if n225 is not None and weighted_per not in (None, 0):
+            _add(rows, r[0], "日経225 PER", "EPS(加重平均)", n225 / weighted_per)
+        if n225 is not None and index_per not in (None, 0):
+            _add(rows, r[0], "日経225 PER", "EPS(指数ベース)", n225 / index_per)
         _add(rows, r[0], "日経225 PER", "配当利回り", r[27] if _num(r[27]) is not None else r[14])
         if n225 is not None and _num(r[17]) not in (None, 0):
             _add(rows, r[0], "ドル建て日経平均", "ドル建て日経平均", n225 / _num(r[17]))
