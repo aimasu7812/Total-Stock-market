@@ -106,6 +106,9 @@ INDEX_HTML = r"""<!doctype html>
     .pane.active { display: block; }
     .category { width: 100%; text-align: left; border: 1px solid var(--line); background: #fff; border-radius: 7px; padding: 10px 11px; cursor: pointer; }
     .category.active { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+    .cat-name { display: block; }
+    .cat-latest { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
+    .category.active .cat-latest { color: #0a55bd; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
     .toolbar > * { min-height: 34px; }
     .time-controls { display: block; }
@@ -166,6 +169,17 @@ INDEX_HTML = r"""<!doctype html>
     .latest-table table { margin-top: 0; }
     .latest-daily-table td { transition: background .15s ease, color .15s ease; }
     .latest-daily-table td.signal { font-weight: 800; }
+    .category-insight { display: none; margin-top: 14px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
+    .category-insight.active { display: block; }
+    .category-insight-head { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; padding: 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+    .category-insight h2, .category-insight h3 { margin: 0; font-size: 15px; }
+    .insight-trend { border-bottom: 1px solid var(--line); }
+    .insight-trend svg { height: 330px; }
+    .insight-history { padding: 12px; }
+    .history-year, .history-month { border: 1px solid var(--line); border-radius: 8px; background: #fff; margin-top: 8px; overflow: hidden; }
+    .history-year > summary, .history-month > summary { cursor: pointer; padding: 9px 11px; font-weight: 700; background: #f8fafc; }
+    .history-month { margin: 8px 10px 10px; }
+    .history-month table { margin-top: 0; }
     .relation-section { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
     .relation-section h2 { margin: 0 0 8px; font-size: 15px; }
     .selected-point { min-height: 32px; color: var(--muted); font-size: 13px; padding: 8px 0 0; }
@@ -216,6 +230,7 @@ INDEX_HTML = r"""<!doctype html>
       aside { border-right: 0; border-bottom: 1px solid var(--line); padding: 10px; position: sticky; top: 0; z-index: 5; overflow: hidden; }
       .stack { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; width: 100%; min-width: 0; max-width: 100%; }
       .category { width: auto; flex: 0 0 auto; white-space: nowrap; padding: 8px 10px; }
+      .cat-latest { white-space: nowrap; font-size: 10px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
       section { padding: 12px; }
       .tabbar { max-width: 100%; overflow-x: auto; }
       .toolbar, .axis-tools, .tech-toolbar { align-items: stretch; }
@@ -226,7 +241,8 @@ INDEX_HTML = r"""<!doctype html>
       #timePane > .mobile-controls-toggle { order: 1; }
       #timePane > .time-controls { order: 2; }
       #timePane > .chart-wrap { order: 3; }
-      #timePane > #table { order: 4; }
+      #timePane > #categoryInsightPane { order: 4; }
+      #timePane > #table { order: 5; }
       #timePane > #technicalPane { order: 3; }
       .mobile-controls-toggle { display: inline-flex; align-items: center; justify-content: center; align-self: flex-end; min-width: 98px; }
       .time-controls { display: none; border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: #f8fafc; }
@@ -258,6 +274,8 @@ INDEX_HTML = r"""<!doctype html>
       .latest-grid { grid-template-columns: 1fr; }
       .latest-tile .value { font-size: 22px; }
       .latest-group-head { align-items: flex-start; flex-direction: column; gap: 2px; }
+      .category-insight-head { flex-direction: column; }
+      .insight-trend svg { height: 380px; }
       .tech-grid, .stats-grid, .regression-charts { grid-template-columns: 1fr; }
       .tech-card.wide svg { height: min(58vh, 520px); min-height: 360px; }
       .tech-card svg { height: 170px; }
@@ -305,6 +323,20 @@ INDEX_HTML = r"""<!doctype html>
         <div class="chart-wrap">
           <svg id="chart" role="img" aria-label="時系列チャート"></svg>
           <div class="legend" id="legend"></div>
+        </div>
+        <div id="categoryInsightPane" class="category-insight">
+          <div class="category-insight-head">
+            <div>
+              <h2 id="categoryInsightTitle">騰落レシオ・信用残</h2>
+              <div class="meta">取得できる過去データを年度/月ごとに折りたたみ、騰落レシオの推移を日別・週平均・月平均で確認できます。</div>
+            </div>
+            <label class="meta">集計 <select id="insightTrendMode"><option value="day">日別</option><option value="week">週平均</option><option value="month">月平均</option></select></label>
+          </div>
+          <div class="insight-trend">
+            <svg id="insightTrendChart" aria-label="騰落レシオの推移"></svg>
+            <div class="legend" id="insightTrendLegend"></div>
+          </div>
+          <div id="insightHistory" class="latest-table latest-daily-table insight-history"></div>
         </div>
         <div id="table"></div>
         <div id="technicalPane" style="display:none">
@@ -505,6 +537,7 @@ INDEX_HTML = r"""<!doctype html>
         to: $("to").value,
         timeView: $("timeView").value,
         timeScale: $("timeScale").value,
+        insightTrendMode: $("insightTrendMode").value,
         bandSigma: $("bandSigma").value,
         xFactor: $("xFactor").value,
         yFactor: $("yFactor").value,
@@ -534,6 +567,7 @@ INDEX_HTML = r"""<!doctype html>
       $("to").value = savedUi.to || "";
       $("timeView").value = savedUi.timeView || "line";
       $("timeScale").value = savedUi.timeScale || "raw";
+      $("insightTrendMode").value = savedUi.insightTrendMode || "day";
       applyAxisSettings();
       $("bandSigma").value = savedUi.bandSigma || "2";
       $("relFrom").value = savedUi.relFrom || "";
@@ -625,7 +659,7 @@ INDEX_HTML = r"""<!doctype html>
       const cats = ["全体", "統計処理", ...realCats];
       category = category || (cats.includes(savedUi.category) ? savedUi.category : realCats[0]);
       initLatestControls();
-      $("categories").innerHTML = cats.map(c => `<button class="category ${c === category ? "active" : ""}" data-c="${c}">${c}</button>`).join("");
+      $("categories").innerHTML = cats.map(categoryButtonHtml).join("");
       document.querySelectorAll(".category").forEach(b => b.onclick = () => {
         saveUiState();
         category = b.dataset.c;
@@ -736,6 +770,55 @@ INDEX_HTML = r"""<!doctype html>
         if (!current || row.date.localeCompare(current.date) > 0) byKey.set(key, row);
       }
       return [...byKey.values()].sort(latestSort);
+    }
+
+    const categorySummaryPrefs = {
+      "空売り比率": ["空売り比率 合計"],
+      "株価トレンド": [/^日経225/, /^TOPIX/, /^VIX指数/],
+      "日経225 PER": ["PER", "EPS(加重平均)", "PBR"],
+      "投資主体別売買動向": ["海外投資家", "個人 計", "証券自己"],
+      "商品先物": [/金/, /WTI|原油/, /銅/],
+      "NT倍率": ["NT倍率(日経225/TOPIX)", "JPX400/TOPIX"],
+      "信用評価損益率": ["信用評価損益率", "売り残(億円)", "買い残(億円)"],
+      "騰落レシオ": ["25日(掲載値)", "15日", "10日", "6日"],
+      "為替": [/ドル円|USDJPY/, /ユーロ円|EURJPY/],
+      "ドル建て日経平均": [/ドル建て/],
+    };
+
+    function compactSeriesLabel(series) {
+      return String(series)
+        .replace(/\s*\(週平均\)/g, "")
+        .replace(/\s*\(日経225\/TOPIX\)/g, "")
+        .replace("空売り比率 ", "")
+        .replace("EPS(加重平均)", "EPS")
+        .replace("信用評価損益率", "損益率")
+        .replace("25日(掲載値)", "25日");
+    }
+
+    function categorySummaryRows(categoryName, entries) {
+      const rows = entries.filter(row => row.category === categoryName);
+      const picked = [];
+      for (const pref of categorySummaryPrefs[categoryName] || []) {
+        const row = rows.find(r => typeof pref === "string" ? r.series === pref : pref.test(r.series));
+        if (row && !picked.some(p => p.series === row.series)) picked.push(row);
+      }
+      for (const row of rows) {
+        if (picked.length >= 3) break;
+        if (!picked.some(p => p.series === row.series)) picked.push(row);
+      }
+      return picked.slice(0, 3);
+    }
+
+    function categoryLatestSummary(categoryName) {
+      if (categoryName === "全体") return "相関ランキング";
+      if (categoryName === "統計処理") return "PCA / 多変量解析";
+      const rows = categorySummaryRows(categoryName, latestEntries());
+      return rows.map(row => `${compactSeriesLabel(row.series)} ${fmt(row.value)}`).join(" / ");
+    }
+
+    function categoryButtonHtml(categoryName) {
+      const summary = categoryLatestSummary(categoryName);
+      return `<button class="category ${categoryName === category ? "active" : ""}" data-c="${esc(categoryName)}"><span class="cat-name">${esc(categoryName)}</span>${summary ? `<span class="cat-latest">${esc(summary)}</span>` : ""}</button>`;
     }
 
     function initLatestControls() {
@@ -877,7 +960,7 @@ INDEX_HTML = r"""<!doctype html>
       return map;
     }
 
-    function drawLatestDailySignals() {
+    function signalRowsAll() {
       const sell = latestSeriesMap("信用評価損益率", "売り残(億円)");
       const buy = latestSeriesMap("信用評価損益率", "買い残(億円)");
       const ratio25 = latestSeriesMap("騰落レシオ", "25日(掲載値)");
@@ -886,19 +969,169 @@ INDEX_HTML = r"""<!doctype html>
       const ratio6 = latestSeriesMap("騰落レシオ", "6日");
       const dates = [...new Set([
         ...sell.keys(), ...buy.keys(), ...ratio25.keys(), ...ratio15.keys(), ...ratio10.keys(), ...ratio6.keys(),
-      ])].sort((a, b) => b.localeCompare(a)).slice(0, 30);
-      $("latestDailySignals").innerHTML = dates.length ? `<table>
+      ])].sort((a, b) => b.localeCompare(a));
+      return dates.map(date => ({
+        date,
+        sell: sell.get(date),
+        buy: buy.get(date),
+        ratio25: ratio25.get(date),
+        ratio15: ratio15.get(date),
+        ratio10: ratio10.get(date),
+        ratio6: ratio6.get(date),
+      }));
+    }
+
+    function signalTableHtml(rows) {
+      return rows.length ? `<table>
         <thead><tr><th>日付</th><th>売り残(億円)</th><th>買い残(億円)</th><th>騰落25日</th><th>15日</th><th>10日</th><th>6日</th></tr></thead>
-        <tbody>${dates.map(date => `<tr>
-          <td>${date}</td>
-          ${balanceCell(sell.get(date), "sell")}
-          ${balanceCell(buy.get(date), "buy")}
-          ${ratioCell(ratio25.get(date))}
-          ${ratioCell(ratio15.get(date))}
-          ${ratioCell(ratio10.get(date))}
-          ${ratioCell(ratio6.get(date))}
+        <tbody>${rows.map(row => `<tr>
+          <td>${row.date}</td>
+          ${balanceCell(row.sell, "sell")}
+          ${balanceCell(row.buy, "buy")}
+          ${ratioCell(row.ratio25)}
+          ${ratioCell(row.ratio15)}
+          ${ratioCell(row.ratio10)}
+          ${ratioCell(row.ratio6)}
         </tr>`).join("")}</tbody>
       </table>` : `<div class="empty">日々推移データがありません</div>`;
+    }
+
+    function drawLatestDailySignals() {
+      $("latestDailySignals").innerHTML = signalTableHtml(signalRowsAll().slice(0, 30));
+    }
+
+    function dateStringFromDate(date) {
+      return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    }
+
+    function weekBucket(dateString) {
+      const d = new Date(dateString + "T00:00:00+09:00");
+      const mondayOffset = (d.getDay() + 6) % 7;
+      d.setDate(d.getDate() - mondayOffset);
+      return dateStringFromDate(d);
+    }
+
+    function signalAggregateKey(date, mode) {
+      if (mode === "week") return weekBucket(date);
+      if (mode === "month") return `${date.slice(0, 7)}-01`;
+      return date;
+    }
+
+    function aggregateSignalRows(rows, mode) {
+      if (mode === "day") return rows.slice().sort((a, b) => a.date.localeCompare(b.date));
+      const fields = ["ratio25", "ratio15", "ratio10", "ratio6"];
+      const groups = groupBy(rows, row => signalAggregateKey(row.date, mode));
+      return Object.entries(groups).map(([date, items]) => {
+        const row = { date };
+        fields.forEach(field => {
+          const values = items.map(item => item[field]).filter(Number.isFinite);
+          row[field] = values.length ? mean(values) : NaN;
+        });
+        return row;
+      }).sort((a, b) => a.date.localeCompare(b.date));
+    }
+
+    function fiscalYear(dateString) {
+      const [year, month] = dateString.split("-").map(Number);
+      return month >= 4 ? year : year - 1;
+    }
+
+    function monthLabel(dateString) {
+      const [year, month] = dateString.split("-").map(Number);
+      return `${year}年${month}月`;
+    }
+
+    function renderSignalHistory(rows) {
+      if (!rows.length) {
+        $("insightHistory").innerHTML = `<div class="empty">日々推移データがありません</div>`;
+        return;
+      }
+      const byYear = groupBy(rows, row => fiscalYear(row.date));
+      $("insightHistory").innerHTML = Object.entries(byYear)
+        .sort((a, b) => Number(b[0]) - Number(a[0]))
+        .map(([year, yearRows], yearIndex) => {
+          const byMonth = groupBy(yearRows, row => row.date.slice(0, 7));
+          const months = Object.entries(byMonth)
+            .sort((a, b) => b[0].localeCompare(a[0]))
+            .map(([month, monthRows], monthIndex) => `<details class="history-month" ${yearIndex === 0 && monthIndex === 0 ? "open" : ""}>
+              <summary>${monthLabel(`${month}-01`)} / ${monthRows.length.toLocaleString()}件</summary>
+              ${signalTableHtml(monthRows.slice().sort((a, b) => b.date.localeCompare(a.date)))}
+            </details>`)
+            .join("");
+          return `<details class="history-year" ${yearIndex === 0 ? "open" : ""}>
+            <summary>${year}年度 / ${yearRows.length.toLocaleString()}件</summary>
+            ${months}
+          </details>`;
+        })
+        .join("");
+    }
+
+    function drawInsightTrendChart(rows, mode) {
+      const svg = $("insightTrendChart");
+      const legend = $("insightTrendLegend");
+      const series = [
+        { key: "ratio25", label: "25日", color: "#1f6feb" },
+        { key: "ratio15", label: "15日", color: "#d1242f" },
+        { key: "ratio10", label: "10日", color: "#2da44e" },
+        { key: "ratio6", label: "6日", color: "#8250df" },
+      ];
+      const values = rows.flatMap(row => series.map(s => row[s.key]).filter(Number.isFinite));
+      if (rows.length < 2 || !values.length) {
+        svg.innerHTML = `<text x="50%" y="50%" text-anchor="middle" fill="#68707c">データ不足</text>`;
+        legend.innerHTML = "";
+        return;
+      }
+      const width = svg.clientWidth || 900, height = svg.clientHeight || 330;
+      const pad = { left: 62, right: 24, top: 24, bottom: 48 };
+      const xs = rows.map(row => parseDate(row.date));
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      let minY = Math.min(...values, 70), maxY = Math.max(...values, 130);
+      if (minY === maxY) { minY -= 1; maxY += 1; }
+      const xp = t => pad.left + ((t - minX) / (maxX - minX || 1)) * (width - pad.left - pad.right);
+      const yp = v => height - pad.bottom - ((v - minY) / (maxY - minY || 1)) * (height - pad.top - pad.bottom);
+      const dateLabel = t => {
+        const dt = new Date(t);
+        return mode === "month"
+          ? `${dt.getFullYear()}/${String(dt.getMonth()+1).padStart(2, "0")}`
+          : `${dt.getFullYear()}/${String(dt.getMonth()+1).padStart(2, "0")}/${String(dt.getDate()).padStart(2, "0")}`;
+      };
+      let grid = "";
+      for (let i = 0; i <= 5; i++) {
+        const gy = pad.top + i * (height - pad.top - pad.bottom) / 5;
+        const val = maxY - i * (maxY - minY) / 5;
+        grid += `<line x1="${pad.left}" y1="${gy}" x2="${width-pad.right}" y2="${gy}" stroke="#edf0f5"/><text x="${pad.left-8}" y="${gy+4}" text-anchor="end" font-size="11" fill="#68707c">${fmt(val)}</text>`;
+      }
+      for (let i = 0; i <= 4; i++) {
+        const tx = pad.left + i * (width - pad.left - pad.right) / 4;
+        grid += `<text x="${tx}" y="${height-18}" text-anchor="middle" font-size="10" fill="#68707c">${dateLabel(minX + i * (maxX - minX) / 4)}</text>`;
+      }
+      const thresholds = [
+        { value: 120, label: "120超 過熱", color: "#cf222e" },
+        { value: 80, label: "80未満 売られ過ぎ", color: "#0969da" },
+      ].map(line => `<line x1="${pad.left}" y1="${yp(line.value)}" x2="${width-pad.right}" y2="${yp(line.value)}" stroke="${line.color}" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${width-pad.right-4}" y="${yp(line.value)-5}" text-anchor="end" font-size="11" font-weight="700" fill="${line.color}">${line.label}</text>`).join("");
+      const paths = series.map(s => {
+        const points = rows.filter(row => Number.isFinite(row[s.key]));
+        if (points.length < 2) return "";
+        const d = points.map((p, i) => `${i ? "L" : "M"} ${xp(parseDate(p.date)).toFixed(1)} ${yp(p[s.key]).toFixed(1)}`).join(" ");
+        const last = points[points.length - 1];
+        return `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2"/><circle cx="${xp(parseDate(last.date))}" cy="${yp(last[s.key])}" r="3.5" fill="${s.color}"><title>${s.label} ${last.date}: ${fmt(last[s.key])}</title></circle>`;
+      }).join("");
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      svg.innerHTML = `${grid}<line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height-pad.bottom}" stroke="#c8ced8"/><line x1="${pad.left}" y1="${height-pad.bottom}" x2="${width-pad.right}" y2="${height-pad.bottom}" stroke="#c8ced8"/>${thresholds}${paths}`;
+      const modeLabel = mode === "week" ? "週平均" : mode === "month" ? "月平均" : "日別";
+      legend.innerHTML = `<span><i class="swatch" style="background:#111827"></i>${modeLabel}</span>` + series.map(s => `<span><i class="swatch" style="background:${s.color}"></i>${s.label}</span>`).join("");
+    }
+
+    function drawCategoryInsight() {
+      const pane = $("categoryInsightPane");
+      const isRatioCategory = category === "騰落レシオ";
+      pane.classList.toggle("active", isRatioCategory);
+      if (!isRatioCategory) return;
+      const rows = signalRowsAll();
+      const mode = $("insightTrendMode").value || "day";
+      $("categoryInsightTitle").textContent = "騰落レシオ・信用残";
+      drawInsightTrendChart(aggregateSignalRows(rows, mode), mode);
+      renderSignalHistory(rows);
     }
 
     function drawLatestPriority(entries) {
@@ -1028,9 +1261,11 @@ INDEX_HTML = r"""<!doctype html>
       document.querySelector(".chart-wrap").style.display = techMode ? "none" : "block";
       $("table").style.display = techMode ? "none" : "block";
       if (techMode) {
+        $("categoryInsightPane").classList.remove("active");
         drawTechnical();
         return;
       }
+      drawCategoryInsight();
       const rows = filteredRows();
       const svg = $("chart");
       const legend = $("legend");
@@ -1904,6 +2139,7 @@ INDEX_HTML = r"""<!doctype html>
     $("series").onchange = drawAndSave;
     $("timeView").onchange = () => { activateTab($("timeView").value === "tech" ? "tech" : "time"); drawAndSave(); };
     $("timeScale").onchange = drawAndSave;
+    $("insightTrendMode").onchange = drawAndSave;
     $("from").onchange = drawAndSave;
     $("to").onchange = drawAndSave;
     $("xFactor").onchange = () => { selectedPointDates = []; drawAndSave(); };
