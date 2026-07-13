@@ -30,13 +30,21 @@ HEADERS = {
 }
 
 
+DATA_ROOT = os.environ.get("NIKKEI225_DATA_ROOT", "/_data/_nfsDATA")
+DATA_CACHE_KEY = os.environ.get("NIKKEI225_DATA_CACHE_KEY", "495550")
+
+
+def _data_path(path: str) -> str:
+    return f"{DATA_ROOT}{path}?{DATA_CACHE_KEY}"
+
+
 DATA_FILES = {
-    "daily2": "/_data/_nfsWEB/DAY/daily2.json?494150",
-    "daily2year": "/_data/_nfsWEB/DAY/daily2year.json?494150",
-    "dailyweek2": "/_data/_nfsWEB/DAY/dailyweek2.json?494150",
-    "s111": "/_data/_nfsWEB/HS_DATA_DAY/S111.json?494150",
-    "s112": "/_data/_nfsWEB/HS_DATA_DAY/S112.json?494150",
-    "s113": "/_data/_nfsWEB/HS_DATA_DAY/S113.json?494150",
+    "daily2": _data_path("/DAY/daily2.json"),
+    "daily2year": _data_path("/DAY/daily2year.json"),
+    "dailyweek2": _data_path("/DAY/dailyweek2.json"),
+    "s111": _data_path("/HS_DATA_DAY/S111.json"),
+    "s112": _data_path("/HS_DATA_DAY/S112.json"),
+    "s113": _data_path("/HS_DATA_DAY/S113.json"),
 }
 
 
@@ -154,6 +162,13 @@ def _num(value: Any) -> float | None:
         return None
 
 
+def _divide(value: Any, divisor: float) -> float | None:
+    number = _num(value)
+    if number is None:
+        return None
+    return number / divisor
+
+
 def _add(rows: list[dict[str, Any]], date_ms: Any, category: str, series: str, value: Any) -> None:
     number = _num(value)
     if number is None:
@@ -192,7 +207,7 @@ def _moving_ratio(period: int):
 
 def fetch_all() -> dict[str, Any]:
     market_files = {
-        f"s{code}": f"/_data/_nfsWEB/HS_DATA_DAY/S{code}.json?494150"
+        f"s{code}": _data_path(f"/HS_DATA_DAY/S{code}.json")
         for code in MARKET_SERIES
     }
     sources = _fetch_sources({**DATA_FILES, **market_files})
@@ -239,6 +254,8 @@ def fetch_all() -> dict[str, Any]:
         for idx, label in labels.items():
             category = "信用評価損益率" if idx in (7, 8) else "投資主体別売買動向"
             _add(rows, r[0], category, label, r[idx])
+        _add(rows, r[0], "信用評価損益率", "売り残(億円)", _divide(r[4], 100))
+        _add(rows, r[0], "信用評価損益率", "買い残(億円)", _divide(r[6], 100))
 
     ratio25 = _moving_ratio(25)
     ratio15 = _moving_ratio(15)
@@ -262,15 +279,20 @@ def fetch_all() -> dict[str, Any]:
     for r in daily2:
         if len(r) < 28:
             continue
+        n225 = _num(r[1])
         per = r[25] if _num(r[25]) is not None else r[12]
         pbr = r[26] if _num(r[26]) is not None else r[13]
         _add(rows, r[0], "日経225 PER", "PER", per)
         _add(rows, r[0], "日経225 PER", "PBR", pbr)
+        if n225 is not None and _num(per) not in (None, 0):
+            _add(rows, r[0], "日経225 PER", "EPS(指数ベース)", n225 / float(_num(per)))
+        if n225 is not None and _num(r[12]) not in (None, 0):
+            _add(rows, r[0], "日経225 PER", "EPS(加重平均)", n225 / float(_num(r[12])))
         _add(rows, r[0], "日経225 PER", "配当利回り", r[27] if _num(r[27]) is not None else r[14])
-        if _num(r[1]) is not None and _num(r[17]) not in (None, 0):
-            _add(rows, r[0], "ドル建て日経平均", "ドル建て日経平均", _num(r[1]) / _num(r[17]))
-        if _num(r[1]) is not None and _num(r[18]) not in (None, 0):
-            _add(rows, r[0], "ドル建て日経平均", "ユーロ建て日経平均", _num(r[1]) / _num(r[18]))
+        if n225 is not None and _num(r[17]) not in (None, 0):
+            _add(rows, r[0], "ドル建て日経平均", "ドル建て日経平均", n225 / _num(r[17]))
+        if n225 is not None and _num(r[18]) not in (None, 0):
+            _add(rows, r[0], "ドル建て日経平均", "ユーロ建て日経平均", n225 / _num(r[18]))
 
     for i, r in enumerate(s111):
         if i >= len(s112):

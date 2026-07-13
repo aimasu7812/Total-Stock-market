@@ -147,6 +147,9 @@ INDEX_HTML = r"""<!doctype html>
     .latest-tile.success-fill .value { color: #fff; }
     .latest-tile.warning-fill { background: #fff8c5; border-color: #eac54f; }
     .latest-tile.warning-fill .value { color: #7d4e00; }
+    .latest-tile.info-fill { background: #0969da; border-color: #0969da; color: #fff; }
+    .latest-tile.info-fill .series, .latest-tile.info-fill .date, .latest-tile.info-fill .subvalue { color: #ddf4ff; }
+    .latest-tile.info-fill .value { color: #fff; }
     .latest-tile.positive { background: #f0fff4; border-color: #9be9a8; }
     .latest-tile.negative { background: #fff1f3; border-color: #ffb3bd; }
     .latest-tile.positive .value, .latest-value-positive { color: #116329; }
@@ -161,6 +164,8 @@ INDEX_HTML = r"""<!doctype html>
     .latest-group { border-top: 1px solid var(--line); padding-top: 14px; }
     .latest-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
     .latest-table table { margin-top: 0; }
+    .latest-daily-table td { transition: background .15s ease, color .15s ease; }
+    .latest-daily-table td.signal { font-weight: 800; }
     .relation-section { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
     .relation-section h2 { margin: 0 0 8px; font-size: 15px; }
     .selected-point { min-height: 32px; color: var(--muted); font-size: 13px; padding: 8px 0 0; }
@@ -328,6 +333,10 @@ INDEX_HTML = r"""<!doctype html>
         <div class="latest-section">
           <h2>主要チェック項目</h2>
           <div id="latestPriority" class="latest-priority-grid"></div>
+        </div>
+        <div class="latest-section">
+          <h2>信用残・騰落レシオ 日々推移</h2>
+          <div id="latestDailySignals" class="latest-table latest-daily-table"></div>
         </div>
         <div class="latest-section">
           <h2>主要カテゴリ</h2>
@@ -819,17 +828,94 @@ INDEX_HTML = r"""<!doctype html>
       return "neutral";
     }
 
+    function latestBuyBalanceClass(row) {
+      if (!row || !Number.isFinite(row.value)) return "";
+      if (row.value > 50000) return "danger-fill";
+      if (row.value > 40000) return "warning-fill";
+      return "neutral";
+    }
+
+    function latestSellBalanceClass(row) {
+      if (!row || !Number.isFinite(row.value)) return "";
+      return row.value > 8000 ? "info-fill" : "neutral";
+    }
+
+    function signalCell(value, formatter, style) {
+      if (!Number.isFinite(value)) return `<td>-</td>`;
+      return `<td class="${style ? "signal" : ""}" style="${style || ""}">${formatter(value)}</td>`;
+    }
+
+    function balanceCell(value, type) {
+      let style = "";
+      if (type === "sell" && Number.isFinite(value) && value > 8000) {
+        style = "background:#dbeafe;color:#075985;";
+      }
+      if (type === "buy" && Number.isFinite(value)) {
+        if (value > 50000) style = "background:#cf222e;color:#fff;";
+        else if (value > 40000) style = "background:#fff8c5;color:#7d4e00;";
+      }
+      return signalCell(value, value => fmt(value), style);
+    }
+
+    function ratioCell(value) {
+      let style = "";
+      if (Number.isFinite(value) && value > 120) {
+        const alpha = Math.min(0.18 + Math.max(value - 120, 0) / 60 * 0.45, 0.72);
+        style = `background:rgba(207,34,46,${alpha});color:${value > 145 ? "#fff" : "#7a0712"};`;
+      } else if (Number.isFinite(value) && value < 80) {
+        const alpha = Math.min(0.18 + Math.max(80 - value, 0) / 40 * 0.45, 0.72);
+        style = `background:rgba(9,105,218,${alpha});color:${value < 55 ? "#fff" : "#0550ae"};`;
+      }
+      return signalCell(value, value => fmt(value), style);
+    }
+
+    function latestSeriesMap(categoryName, seriesName) {
+      const map = new Map();
+      for (const row of payload?.rows || []) {
+        if (row.category === categoryName && row.series === seriesName) map.set(row.date, row.value);
+      }
+      return map;
+    }
+
+    function drawLatestDailySignals() {
+      const sell = latestSeriesMap("信用評価損益率", "売り残(億円)");
+      const buy = latestSeriesMap("信用評価損益率", "買い残(億円)");
+      const ratio25 = latestSeriesMap("騰落レシオ", "25日(掲載値)");
+      const ratio15 = latestSeriesMap("騰落レシオ", "15日");
+      const ratio10 = latestSeriesMap("騰落レシオ", "10日");
+      const ratio6 = latestSeriesMap("騰落レシオ", "6日");
+      const dates = [...new Set([
+        ...sell.keys(), ...buy.keys(), ...ratio25.keys(), ...ratio15.keys(), ...ratio10.keys(), ...ratio6.keys(),
+      ])].sort((a, b) => b.localeCompare(a)).slice(0, 30);
+      $("latestDailySignals").innerHTML = dates.length ? `<table>
+        <thead><tr><th>日付</th><th>売り残(億円)</th><th>買い残(億円)</th><th>騰落25日</th><th>15日</th><th>10日</th><th>6日</th></tr></thead>
+        <tbody>${dates.map(date => `<tr>
+          <td>${date}</td>
+          ${balanceCell(sell.get(date), "sell")}
+          ${balanceCell(buy.get(date), "buy")}
+          ${ratioCell(ratio25.get(date))}
+          ${ratioCell(ratio15.get(date))}
+          ${ratioCell(ratio10.get(date))}
+          ${ratioCell(ratio6.get(date))}
+        </tr>`).join("")}</tbody>
+      </table>` : `<div class="empty">日々推移データがありません</div>`;
+    }
+
     function drawLatestPriority(entries) {
       const per = latestExact(entries, "日経225 PER", "PER");
       const pbr = latestExact(entries, "日経225 PER", "PBR");
+      const epsRow = latestExact(entries, "日経225 PER", "EPS(指数ベース)");
+      const weightedEps = latestExact(entries, "日経225 PER", "EPS(加重平均)");
       const nikkeiPrice = latestNikkeiPrice(entries);
-      const eps = nikkeiPrice && per?.value ? nikkeiPrice.value / per.value : NaN;
+      const eps = epsRow?.value ?? (nikkeiPrice && per?.value ? nikkeiPrice.value / per.value : NaN);
       const shortRatio = latestExact(entries, "空売り比率", "空売り比率 合計");
       const overseas = latestExact(entries, "投資主体別売買動向", "海外投資家");
       const individual = latestExact(entries, "投資主体別売買動向", "個人 計");
       const proprietary = latestExact(entries, "投資主体別売買動向", "証券自己");
       const vix = latestBy(entries, "株価トレンド", series => series.startsWith("VIX指数"));
       const marginProfit = latestExact(entries, "信用評価損益率", "信用評価損益率");
+      const sellBalance = latestExact(entries, "信用評価損益率", "売り残(億円)");
+      const buyBalance = latestExact(entries, "信用評価損益率", "買い残(億円)");
       const topix = latestBy(entries, "株価トレンド", series => series.startsWith("TOPIX"));
       const ntRatio = latestExact(entries, "NT倍率", "NT倍率(日経225/TOPIX)");
 
@@ -837,13 +923,14 @@ INDEX_HTML = r"""<!doctype html>
       const currentPerValue = per ? `現在PER ${fmt(per.value)}倍` : "現在PER 算出不可";
       const pbrValue = pbr ? `PBR ${fmt(pbr.value)}倍` : "PBR未取得";
       const priceValue = nikkeiPrice ? `日経平均 ${fmt(nikkeiPrice.value)}` : "日経平均未取得";
+      const weightedEpsValue = weightedEps ? `加重平均EPS ${fmt(weightedEps.value)}` : "加重平均EPS未取得";
       const priorityCards = [
         `<div class="latest-tile hero">
           <div class="series">日経平均 現在PER / EPS</div>
           <span class="value">${currentPerValue}</span>
-          <div class="latest-mini-values"><span>EPS ${epsValue}</span><span>${pbrValue}</span><span>${priceValue}</span></div>
+          <div class="latest-mini-values"><span>EPS ${epsValue}</span><span>${weightedEpsValue}</span><span>${pbrValue}</span><span>${priceValue}</span></div>
           ${latestPerLadder(eps, per?.value)}
-          <div class="date">${latestDateOf(nikkeiPrice, per, pbr)} / EPS = 日経平均 ÷ PER</div>
+          <div class="date">${latestDateOf(epsRow, nikkeiPrice, per, pbr)} / EPS = 日経平均 ÷ PER</div>
         </div>`,
         latestPriorityTile("空売り比率 合計", shortRatio, {
           className: shortRatio?.value > 40 ? "success-fill" : "neutral",
@@ -862,6 +949,16 @@ INDEX_HTML = r"""<!doctype html>
           className: marginProfit?.value > 10 ? "danger-fill" : "neutral",
           formatter: value => `${fmt(value)}%`,
           sub: marginProfit?.value > 10 ? "10%超: 赤" : "10%以下",
+        }),
+        latestPriorityTile("売り残", sellBalance, {
+          className: latestSellBalanceClass(sellBalance),
+          formatter: value => `${fmt(value)}億円`,
+          sub: sellBalance?.value > 8000 ? "8,000億円超: 青" : "8,000億円以下",
+        }),
+        latestPriorityTile("買い残", buyBalance, {
+          className: latestBuyBalanceClass(buyBalance),
+          formatter: value => `${fmt(value)}億円`,
+          sub: buyBalance?.value > 50000 ? "5兆円超: 赤" : buyBalance?.value > 40000 ? "4兆円超: 黄" : "4兆円以下",
         }),
         latestPriorityTile("日経平均", nikkeiPrice, { formatter: value => fmt(value), sub: nikkeiPrice?.series || "株価トレンド" }),
         latestPriorityTile("TOPIX", topix, { formatter: value => fmt(value), sub: topix?.series || "株価トレンド" }),
@@ -887,6 +984,7 @@ INDEX_HTML = r"""<!doctype html>
       ].map(([k, v]) => `<div class="metric"><span class="meta">${k}</span><b>${v}</b></div>`).join("");
 
       drawLatestPriority(allEntries);
+      drawLatestDailySignals();
 
       const highlights = entries.filter(r => latestHighlightCategories.has(r.category)).slice(0, 18);
       $("latestHighlights").innerHTML = highlights.length
