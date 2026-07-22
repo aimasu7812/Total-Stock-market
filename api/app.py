@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app import INDEX_HTML  # noqa: E402
-from data_sources import JST, cache_age_hours, cache_is_stale, load_cache, load_fresh_cache, refresh_cache  # noqa: E402
+from data_sources import JST, cache_age_hours, cache_is_stale, cache_max_date, load_cache, load_fresh_cache, refresh_cache  # noqa: E402
 
 
 COOKIE_NAME = "nikkei_dashboard_auth"
@@ -143,8 +143,10 @@ class handler(BaseHTTPRequestHandler):
             body = {
                 "now": datetime.now(JST).isoformat(timespec="seconds"),
                 "cache_fetched_at": cache.get("fetched_at") if cache else None,
+                "cache_max_date": cache_max_date(cache),
                 "cache_age_hours": cache_age_hours(cache),
                 "cache_stale": cache_is_stale(cache),
+                "error": cache.get("error") if cache else None,
             }
             self._send(200, json.dumps(body, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
             return

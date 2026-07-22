@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 import re
+import subprocess
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
@@ -31,21 +33,43 @@ HEADERS = {
 
 
 DATA_ROOT = os.environ.get("NIKKEI225_DATA_ROOT", "/_data/_nfsDATA")
-DATA_CACHE_KEY = os.environ.get("NIKKEI225_DATA_CACHE_KEY", "495550")
+DATA_CACHE_KEY = os.environ.get("NIKKEI225_DATA_CACHE_KEY")
+FALLBACK_DATA_CACHE_KEY = os.environ.get("NIKKEI225_FALLBACK_DATA_CACHE_KEY", "495758")
+_DISCOVERED_DATA_CACHE_KEY: str | None = None
 
 
-def _data_path(path: str) -> str:
-    return f"{DATA_ROOT}{path}?{DATA_CACHE_KEY}"
+def _discover_data_cache_key(force: bool = False) -> str:
+    global _DISCOVERED_DATA_CACHE_KEY
+    if DATA_CACHE_KEY:
+        return DATA_CACHE_KEY
+    if _DISCOVERED_DATA_CACHE_KEY and not force:
+        return _DISCOVERED_DATA_CACHE_KEY
+    try:
+        response = requests.get(REFERER, headers=HEADERS, timeout=30)
+        response.raise_for_status()
+        keys = re.findall(rf"{re.escape(DATA_ROOT)}/[^\"']+?\.json\?(\d+)", response.text)
+        if keys:
+            _DISCOVERED_DATA_CACHE_KEY = Counter(keys).most_common(1)[0][0]
+            return _DISCOVERED_DATA_CACHE_KEY
+    except Exception:
+        pass
+    _DISCOVERED_DATA_CACHE_KEY = FALLBACK_DATA_CACHE_KEY
+    return _DISCOVERED_DATA_CACHE_KEY
 
 
-DATA_FILES = {
-    "daily2": _data_path("/DAY/daily2.json"),
-    "daily2year": _data_path("/DAY/daily2year.json"),
-    "dailyweek2": _data_path("/DAY/dailyweek2.json"),
-    "s111": _data_path("/HS_DATA_DAY/S111.json"),
-    "s112": _data_path("/HS_DATA_DAY/S112.json"),
-    "s113": _data_path("/HS_DATA_DAY/S113.json"),
-}
+def _data_path(path: str, cache_key: str) -> str:
+    return f"{DATA_ROOT}{path}?{cache_key}"
+
+
+def _data_files(cache_key: str) -> dict[str, str]:
+    return {
+        "daily2": _data_path("/DAY/daily2.json", cache_key),
+        "daily2year": _data_path("/DAY/daily2year.json", cache_key),
+        "dailyweek2": _data_path("/DAY/dailyweek2.json", cache_key),
+        "s111": _data_path("/HS_DATA_DAY/S111.json", cache_key),
+        "s112": _data_path("/HS_DATA_DAY/S112.json", cache_key),
+        "s113": _data_path("/HS_DATA_DAY/S113.json", cache_key),
+    }
 
 
 MARKET_SERIES = {
@@ -129,11 +153,49 @@ def _parse_js_array(source: str, var_name: str) -> list[list[Any]]:
 
 
 def _fetch_js(path: str) -> str:
-    response = requests.get(BASE_URL + path, headers=HEADERS, timeout=30)
-    response.raise_for_status()
-    if "404 Not Found" in response.text[:300]:
-        raise RuntimeError(f"404 from {path}; the site may require updated cache keys")
-    return response.text
+    url = BASE_URL + path
+    request_error: Exception | None = None
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=30)
+        response.raise_for_status()
+        if "404 Not Found" in response.text[:300]:
+            raise RuntimeError(f"404 from {path}; the site may require updated cache keys")
+        if "Just a moment" not in response.text[:500]:
+            return response.text
+        request_error = RuntimeError(f"Cloudflare challenge from {path}")
+    except Exception as exc:
+        request_error = exc
+    try:
+        return _fetch_with_curl(url)
+    except Exception as curl_error:
+        raise RuntimeError(f"failed to fetch {path}: {request_error}; curl fallback: {curl_error}") from curl_error
+
+
+def _fetch_with_curl(url: str) -> str:
+    result = subprocess.run(
+        [
+            "curl",
+            "-fsSL",
+            "--compressed",
+            "--max-time",
+            "30",
+            "-A",
+            HEADERS["User-Agent"],
+            "-e",
+            REFERER,
+            url,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=35,
+        check=False,
+    )
+    if result.returncode != 0:
+        message = (result.stderr or result.stdout).strip()
+        raise RuntimeError(message or f"curl exited with {result.returncode}")
+    if "Just a moment" in result.stdout[:500] or "404 Not Found" in result.stdout[:300]:
+        raise RuntimeError("site returned a challenge or 404 page")
+    return result.stdout
 
 
 def _fetch_sources(paths: dict[str, str]) -> dict[str, str]:
@@ -206,11 +268,12 @@ def _moving_ratio(period: int):
 
 
 def fetch_all() -> dict[str, Any]:
+    cache_key = _discover_data_cache_key(force=True)
     market_files = {
-        f"s{code}": _data_path(f"/HS_DATA_DAY/S{code}.json")
+        f"s{code}": _data_path(f"/HS_DATA_DAY/S{code}.json", cache_key)
         for code in MARKET_SERIES
     }
-    sources = _fetch_sources({**DATA_FILES, **market_files})
+    sources = _fetch_sources({**_data_files(cache_key), **market_files})
     daily2 = _parse_js_array(sources["daily2"], "DAILY")
     daily2year = _parse_js_array(sources["daily2year"], "DAILY")
     dailyweek2 = _parse_js_array(sources["dailyweek2"], "DAILY")
@@ -350,6 +413,7 @@ def fetch_all() -> dict[str, Any]:
         "source": BASE_URL,
         "fetched_at": datetime.now(JST).isoformat(timespec="seconds"),
         "data_dir": str(DATA_DIR),
+        "data_cache_key": cache_key,
         "rows": rows,
         "technical": sorted(technical, key=lambda row: row["date"]),
     }
@@ -360,11 +424,23 @@ def fetch_all() -> dict[str, Any]:
 
 
 def load_cache() -> dict[str, Any] | None:
-    if not CACHE_PATH.exists():
-        if BUNDLED_CACHE_PATH.exists():
-            return json.loads(BUNDLED_CACHE_PATH.read_text(encoding="utf-8"))
+    candidates: list[dict[str, Any]] = []
+    for path in (CACHE_PATH, BUNDLED_CACHE_PATH):
+        if path.exists():
+            candidates.append(json.loads(path.read_text(encoding="utf-8")))
+    if not candidates:
         return None
-    return json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+    return max(candidates, key=lambda payload: _cache_timestamp(payload))
+
+
+def _cache_timestamp(payload: dict[str, Any]) -> datetime:
+    try:
+        fetched_at = datetime.fromisoformat(str(payload.get("fetched_at", "")))
+    except ValueError:
+        return datetime.min.replace(tzinfo=JST)
+    if fetched_at.tzinfo is None:
+        fetched_at = fetched_at.replace(tzinfo=JST)
+    return fetched_at.astimezone(JST)
 
 
 def cache_age_hours(payload: dict[str, Any] | None) -> float | None:
@@ -377,6 +453,11 @@ def cache_age_hours(payload: dict[str, Any] | None) -> float | None:
     if fetched_at.tzinfo is None:
         fetched_at = fetched_at.replace(tzinfo=JST)
     return (datetime.now(JST) - fetched_at.astimezone(JST)).total_seconds() / 3600
+
+
+def cache_max_date(payload: dict[str, Any] | None) -> str | None:
+    dates = [row.get("date") for row in (payload or {}).get("rows", []) if row.get("date")]
+    return max(dates) if dates else None
 
 
 def cache_is_stale(payload: dict[str, Any] | None, max_age_hours: float = AUTO_REFRESH_HOURS) -> bool:

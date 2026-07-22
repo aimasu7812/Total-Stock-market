@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from data_sources import JST, cache_age_hours, cache_is_stale, load_cache, load_fresh_cache, refresh_cache
+from data_sources import JST, cache_age_hours, cache_is_stale, cache_max_date, load_cache, load_fresh_cache, refresh_cache
 
 
 HOST = "127.0.0.1"
@@ -654,7 +654,9 @@ INDEX_HTML = r"""<!doctype html>
         $("status").textContent = "データがありません。更新チェックを押してください。";
         return;
       }
-      $("status").textContent = `取得: ${payload.fetched_at} / ${payload.rows.length.toLocaleString()}点`;
+      const maxDataDate = payload.rows.reduce((max, row) => row.date > max ? row.date : max, "");
+      const errorNote = payload.error ? ` / 更新失敗: ${String(payload.error).slice(0, 80)}` : "";
+      $("status").textContent = `取得: ${payload.fetched_at} / 最新日付: ${maxDataDate} / ${payload.rows.length.toLocaleString()}点${errorNote}`;
       const realCats = [...new Set(payload.rows.map(r => r.category))];
       const cats = ["全体", "統計処理", ...realCats];
       category = category || (cats.includes(savedUi.category) ? savedUi.category : realCats[0]);
@@ -2322,7 +2324,7 @@ class Handler(BaseHTTPRequestHandler):
                 STATE["last_error"] = None
             except Exception as exc:
                 STATE["last_error"] = str(exc)
-                cache = load_cache() or {"rows": [], "error": STATE["last_error"]}
+                cache = {**(load_cache() or {"rows": []}), "error": STATE["last_error"]}
             self._send(200, json.dumps(cache, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
             return
         if path == "/api/status":
@@ -2331,6 +2333,7 @@ class Handler(BaseHTTPRequestHandler):
                 **STATE,
                 "now": datetime.now(JST).isoformat(timespec="seconds"),
                 "cache_fetched_at": cache.get("fetched_at") if cache else None,
+                "cache_max_date": cache_max_date(cache),
                 "cache_age_hours": cache_age_hours(cache),
                 "cache_stale": cache_is_stale(cache),
             }
