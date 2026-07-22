@@ -680,7 +680,8 @@ INDEX_HTML = r"""<!doctype html>
           saveUiState();
           return;
         }
-        if (activeTab === "overview" || activeTab === "stats") activateTab("time");
+        document.querySelectorAll(".category").forEach(btn => btn.classList.toggle("active", btn.dataset.c === category));
+        if (activeTab === "overview" || activeTab === "stats" || activeTab === "latest") activateTab("time");
         loadData();
       });
       if (activeTab === "latest") {
