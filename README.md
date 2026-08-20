@@ -52,7 +52,7 @@ Vercel設定手順:
 
 `vercel.json` には毎週木曜日 18:30 JST（09:30 UTC）に `/api/update` を呼ぶ Cron Job を設定しています。Vercelは `CRON_SECRET` を `Authorization` ヘッダーとして送るため、この値を設定してからRedeployしてください。
 
-注意: VercelのServerless環境では保存領域が永続ではないため、初期表示は同梱の `data/cache.json` を使います。画面表示時にキャッシュが古い場合は自動で再取得し、画面の `更新チェック` やCronで取得した最新データは、その実行インスタンス上の一時領域に保存されます。nikkei225jp.com 側のデータURL末尾のキャッシュキーはページから自動検出します。より完全な永続化が必要な場合は、Vercel Blob/KVやGitHub Actionsで `data/cache.json` を更新する方式を追加してください。
+注意: VercelのServerless環境では保存領域が永続ではないため、初期表示は同梱の `data/cache.json` を使います。画面表示時にキャッシュが古い場合は自動で再取得し、画面の `更新チェック` やCronで取得した最新データは、その実行インスタンス上の一時領域に保存されます。nikkei225jp.com 側のデータURL末尾のキャッシュキーはページから自動検出します。通常ドメインが403を返す場合は `origin.nikkei225jp.com` に自動フォールバックします。より完全な永続化が必要な場合は、Vercel Blob/KVやGitHub Actionsで `data/cache.json` を更新する方式を追加してください。
 
 ## できること
 
@@ -110,7 +110,9 @@ Vercel本番では、`vercel.json` の Cron Job が毎週木曜日18:30 JST頃�
 
 また、`/api/data` はキャッシュの `fetched_at` が `NIKKEI225_AUTO_REFRESH_HOURS`（既定12時間）以上古い場合、自動で最新データを取得してから返します。Cronや手動更新が失敗していても、次回表示時に再取得を試みます。
 
-nikkei225jp.com のデータURL末尾に付くキャッシュキーは固定せず、`https://nikkei225jp.com/data/shutai.php` から現在値を自動検出します。取得に失敗した場合は、画面上部ステータスと `/api/status` にエラー内容とキャッシュ内の最新日付を表示します。緊急時だけ `NIKKEI225_DATA_CACHE_KEY` を Vercel の環境変数に設定すると手動上書きできます。
+nikkei225jp.com のデータURL末尾に付くキャッシュキーは固定せず、`https://nikkei225jp.com/data/shutai.php` から現在値を自動検出します。通常ドメインが403やCloudflare応答を返した場合は、`https://origin.nikkei225jp.com/data/shutai.php` と同じJSONパスへ自動フォールバックします。取得に失敗した場合は、画面上部ステータスと `/api/status` にエラー内容とキャッシュ内の最新日付を表示します。緊急時だけ `NIKKEI225_DATA_CACHE_KEY` を Vercel の環境変数に設定すると手動上書きできます。
+
+投資主体別売買動向と信用評価損益率は週次データです。空売り比率、株価、為替、騰落レシオなどの日次データより最終日が数営業日遅れることがあります。
 
 抽出済みデータは外付けドライブの `/Volumes/Crucial X9/AI/nikkei225-dashboard-data/cache.json` に保存されます。
 保存先を変える場合は、起動前に `NIKKEI225_DATA_DIR` を指定してください。

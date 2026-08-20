@@ -15,6 +15,12 @@ import requests
 
 
 BASE_URL = "https://nikkei225jp.com"
+ORIGIN_BASE_URL = "https://origin.nikkei225jp.com"
+FETCH_BASE_URLS = [
+    url.rstrip("/")
+    for url in os.environ.get("NIKKEI225_FETCH_BASE_URLS", f"{BASE_URL},{ORIGIN_BASE_URL}").split(",")
+    if url.strip()
+]
 REFERER = f"{BASE_URL}/data/shutai.php"
 JST = timezone(timedelta(hours=9))
 DEFAULT_DATA_DIR = Path("/tmp/nikkei225-dashboard-data") if os.environ.get("VERCEL") else Path("/Volumes/Crucial X9/AI/nikkei225-dashboard-data")
@@ -34,7 +40,7 @@ HEADERS = {
 
 DATA_ROOT = os.environ.get("NIKKEI225_DATA_ROOT", "/_data/_nfsDATA")
 DATA_CACHE_KEY = os.environ.get("NIKKEI225_DATA_CACHE_KEY")
-FALLBACK_DATA_CACHE_KEY = os.environ.get("NIKKEI225_FALLBACK_DATA_CACHE_KEY", "495758")
+FALLBACK_DATA_CACHE_KEY = os.environ.get("NIKKEI225_FALLBACK_DATA_CACHE_KEY", "496451")
 _DISCOVERED_DATA_CACHE_KEY: str | None = None
 
 
@@ -44,15 +50,16 @@ def _discover_data_cache_key(force: bool = False) -> str:
         return DATA_CACHE_KEY
     if _DISCOVERED_DATA_CACHE_KEY and not force:
         return _DISCOVERED_DATA_CACHE_KEY
-    try:
-        response = requests.get(REFERER, headers=HEADERS, timeout=30)
-        response.raise_for_status()
-        keys = re.findall(rf"{re.escape(DATA_ROOT)}/[^\"']+?\.json\?(\d+)", response.text)
-        if keys:
-            _DISCOVERED_DATA_CACHE_KEY = Counter(keys).most_common(1)[0][0]
-            return _DISCOVERED_DATA_CACHE_KEY
-    except Exception:
-        pass
+    for base_url in FETCH_BASE_URLS:
+        try:
+            page_url = f"{base_url}/data/shutai.php"
+            source = _fetch_url(page_url, _referer_for_base(base_url))
+            keys = re.findall(rf"{re.escape(DATA_ROOT)}/[^\"']+?\.json\?(\d+)", source)
+            if keys:
+                _DISCOVERED_DATA_CACHE_KEY = Counter(keys).most_common(1)[0][0]
+                return _DISCOVERED_DATA_CACHE_KEY
+        except Exception:
+            continue
     _DISCOVERED_DATA_CACHE_KEY = FALLBACK_DATA_CACHE_KEY
     return _DISCOVERED_DATA_CACHE_KEY
 
@@ -152,26 +159,40 @@ def _parse_js_array(source: str, var_name: str) -> list[list[Any]]:
     return json.loads(text)
 
 
-def _fetch_js(path: str) -> str:
-    url = BASE_URL + path
+def _referer_for_base(base_url: str) -> str:
+    return f"{base_url.rstrip('/')}/data/shutai.php"
+
+
+def _fetch_url(url: str, referer: str) -> str:
     request_error: Exception | None = None
     try:
-        response = requests.get(url, headers=HEADERS, timeout=30)
+        response = requests.get(url, headers={**HEADERS, "Referer": referer}, timeout=30)
         response.raise_for_status()
         if "404 Not Found" in response.text[:300]:
-            raise RuntimeError(f"404 from {path}; the site may require updated cache keys")
+            raise RuntimeError("site returned a 404 page")
         if "Just a moment" not in response.text[:500]:
             return response.text
-        request_error = RuntimeError(f"Cloudflare challenge from {path}")
+        request_error = RuntimeError("site returned a Cloudflare challenge")
     except Exception as exc:
         request_error = exc
     try:
-        return _fetch_with_curl(url)
+        return _fetch_with_curl(url, referer)
     except Exception as curl_error:
-        raise RuntimeError(f"failed to fetch {path}: {request_error}; curl fallback: {curl_error}") from curl_error
+        raise RuntimeError(f"{request_error}; curl fallback: {curl_error}") from curl_error
 
 
-def _fetch_with_curl(url: str) -> str:
+def _fetch_js(path: str) -> str:
+    errors: list[str] = []
+    for base_url in FETCH_BASE_URLS:
+        url = base_url + path
+        try:
+            return _fetch_url(url, _referer_for_base(base_url))
+        except Exception as exc:
+            errors.append(f"{base_url}: {exc}")
+    raise RuntimeError(f"failed to fetch {path}: {'; '.join(errors)}")
+
+
+def _fetch_with_curl(url: str, referer: str) -> str:
     result = subprocess.run(
         [
             "curl",
@@ -182,7 +203,7 @@ def _fetch_with_curl(url: str) -> str:
             "-A",
             HEADERS["User-Agent"],
             "-e",
-            REFERER,
+            referer,
             url,
         ],
         capture_output=True,
